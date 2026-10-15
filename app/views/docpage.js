@@ -40,7 +40,7 @@ export function DocPage({ doc, page, selected, compact }) {
     </div>
     <div class="paper-body">
       <p class="printed">${segs.map(s => s.r
-        ? html`<mark class=${(s.r.strong ? 'sel ' : '') + (lowConf(s.r.ev) ? 'low' : '')} title=${`${s.r.ev.id} · ${s.r.ev.label} · read "${s.r.ev.text_as_read}" · confidence ${s.r.ev.confidence}`}
+        ? html`<mark class=${(s.r.strong ? 'sel ' : '') + (lowConf(s.r.ev) ? 'low' : '')} title=${`${s.r.ev.id} · ${s.r.ev.label} · read "${show(s.r.ev.text_as_read || '')}" · confidence ${s.r.ev.confidence}`}
             onClick=${() => app.openTrace(s.r.ev.id)}>${show(s.t)}</mark>`
         : show(s.t))}</p>
       ${box && !compact && html`<div class="locator" title="Synthetic position from extracted_values.position (where a real page image would be highlighted)">

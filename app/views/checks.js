@@ -60,7 +60,7 @@ export function ChecksView() {
     </div>`}
     <div class="checks">${list.map(({ c, res }) => html`<${CheckCard} c=${c} res=${res} focused=${focus === c.id}
       selectable=${(c.proposals || []).length && res !== 'adopted'} selected=${selected.has(c.id)}
-      onSelect=${on => { const s = new Set(selected); on ? s.add(c.id) : s.delete(c.id); setSelected(s); }}
+      onSelect=${on => setSelected(prev => { const s = new Set(prev); on ? s.add(c.id) : s.delete(c.id); return s; })}
       onAdopt=${() => adopt([{ c }])} onDismiss=${r => dismiss(c, r)} onAsk=${() => ask(c)} />`)}
       ${!list.length && html`<div class="empty">Nothing here.</div>`}
     </div>

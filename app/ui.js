@@ -118,6 +118,16 @@ export function locate(model, ev, text) {
     if (i >= 0 && i < to) return [i, i + c.length];
   }
   for (const c of cands) { const i = c ? text.indexOf(c) : -1; if (i >= 0) return [i, i + c.length]; }
+  // The printed text may not contain what the pipeline read (an ambiguous digit,
+  // e.g. "$?,500.00" read as 1,500.00): match the longest printed suffix and
+  // extend left to the start of that token, so the reviewer sees the real print.
+  for (const c of [...cands].filter(x => x && x.length >= 5)) {
+    for (let k = c.length - 1; k >= 4; k--) {
+      const tail = c.slice(c.length - k);
+      const i = text.indexOf(tail, from);
+      if (i >= 0 && i < to) { let st = i; while (st > 0 && !/\s/.test(text[st - 1])) st--; return [st, i + tail.length]; }
+    }
+  }
   return anchor && from > 0 ? [from, Math.min(to, from + anchor.length)] : null;
 }
 

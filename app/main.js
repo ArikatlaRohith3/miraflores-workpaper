@@ -94,6 +94,7 @@ function App({ model, ledger }) {
     go(path) { location.hash = '#/' + path; },
     notify,
   };
+  window.__app = app; // read-only hook for the automated end-to-end tests
   function notify(text, kind = 'ok', undo) { setToast({ text, kind, undo, t: Date.now() }); }
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), toast.undo ? 9000 : 4000); return () => clearTimeout(t); }, [toast]);
 

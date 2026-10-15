@@ -40,6 +40,6 @@ Derived (pure functions)
 
 ## Main tradeoffs
 
-- **Static app + browser storage + export/import** instead of a backend: zero build, any static host, works offline; live multi-user is real between tabs/windows (BroadcastChannel) but not across machines. The ledger is the sync unit, so a server is a drop-in (append endpoint + subscription).
+- **The server is dumb on purpose.** It appends and lists events and does nothing else; all meaning lives in the fold on the client. Each event gets its own time-ordered key, so concurrent saves can't collide. A shared document with compare-and-swap lost writes under load testing, which is why it was rejected. Sync is 2-second polling: simple and good enough for a review team. Websockets would be the next step. There is no authentication: the role switcher stands in for logins, and roles are enforced in the action layer.
 - **Checks are coded per risk**, not generic rules: they read like a senior's review and produce exact evidence, at the cost of being specific to this packet's document types.
 - **Rates, not recomputation**: honest about being an approximation; second-order effects (QBI, SEP limit, thresholds) are called out where they matter.

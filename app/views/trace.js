@@ -131,7 +131,7 @@ function SourceRow({ s }) {
     if (!e) return html`<div><code>${s}</code></div>`;
     return html`<div class="source-row">
       <${Ref} r=${s} label=${`${e.document_id} p${e.page} · ${e.label}`} />
-      <span class="num">${typeof e.value === 'number' ? fmtMoney(e.value, !Number.isInteger(e.value)) : String(e.value ?? '(blank)')}</span>
+      <span class="num">${typeof e.value === 'number' ? fmtMoney(e.value, !Number.isInteger(e.value)) : ['ssn', 'account_number'].includes(e.value_type) ? html`<${Sensitive} text=${String(e.value)} what=${s} />` : String(e.value ?? '(blank)')}</span>
       <${Conf} c=${e.confidence} />
     </div>`;
   }

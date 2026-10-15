@@ -1,20 +1,23 @@
 # Miraflores Workpaper: Okafor-Lindqvist 2025
 
-A web-native tax workpaper for one complex household's return. It loads `data/packet.json` as delivered and never modifies it. Everything people do is saved as an append-only log on top of the packet.
+A web-native tax workpaper for one complex household's return. It loads `data/packet.json` as delivered and never modifies it. Everything people do is saved as an append-only log on top of the packet, stored on the server so several people can work on it at once.
+
+**Live:** https://rohith-miraflores-workpaper.netlify.app. Everyone who opens this link shares the `demo` workspace. For a clean copy of your own, click the green status chip in the header, then **Open a new private sandbox**.
 
 - **Core idea and data model:** [docs/ONE_PAGER.md](docs/ONE_PAGER.md)
 - **Errors found and how the design surfaced them:** [docs/ERRORS.md](docs/ERRORS.md)
 
 ## Run it
 
-It is a static site with no build step and no dependencies to install.
+The front end is static, with no build step. The shared log is two small Netlify Functions backed by Netlify Blobs.
 
 ```bash
-python -m http.server 8000      # from this folder
-# open http://localhost:8000
+netlify dev                     # front end + functions + local storage on http://localhost:8888
+# or, front end only (the log is then saved in the browser):
+python -m http.server 8000
 ```
 
-To deploy, use any static host: GitHub Pages (push the repo, then Settings → Pages → deploy from the branch root), Netlify Drop (drag the folder in), or Vercel. The page has to be served over HTTP so it can fetch the packet. Opening `index.html` from disk won't work.
+Deploy with `netlify deploy --prod` (it uses `netlify.toml`). Without the functions the app still works: it detects that there is no server and saves in the browser instead.
 
 ## Five-minute tour
 
@@ -41,6 +44,28 @@ To deploy, use any static host: GitHub Pages (push the repo, then Settings → P
 
 `Ctrl K` searches everything: line keys, amounts, documents, securities, answers and people.
 
+## Tests
+
+```bash
+node tools/run_checks.mjs                     # the 32 independent checks, headless
+node tools/e2e.mjs                            # 115 end-to-end checks of every requirement in the brief, run against the live site
+node tools/e2e.mjs http://localhost:8888      # …or against netlify dev
+```
+
+`e2e.mjs` drives the real UI in two independent headless Chrome browsers, so it is two different "computers". It covers:
+
+- tracing a number to its exact field and a document to where it landed;
+- verification, links and file evidence;
+- reconciliations and large detail;
+- adjustments with tax effects, live sync and simultaneous saves, bulk adopt and undo, versions and what-ifs;
+- role enforcement, PII masking and the view log;
+- judgments and completeness;
+- client questions, notifications, assignments, blocking notes and reopening sign-offs;
+- extension, client signature, e-file rejection and fix, freeze, amendment, notice response, roll-forward;
+- standards, time and search, every CPA record, and persistence across reloads.
+
+It uses a throwaway workspace and deletes it afterwards.
+
 ## Layout
 
 ```
@@ -53,12 +78,14 @@ app/
                 changes/versions, review, filing, firm, client portal, search
   vendor/       Preact + htm (13 KB, vendored, no CDN at runtime)
 data/packet.json   the packet, unchanged
+netlify/functions/ ledger.mjs (shared append-only log), files.mjs (evidence files)
 tools/          probe scripts used to explore the packet, headless check runner, browser smoke test
 ```
 
 ## Decisions and tradeoffs
 
-- **No build and no backend.** Anyone can run it from a link. The cost is that saved state lives in the browser's localStorage. Live collaboration works across tabs and windows on one machine (BroadcastChannel), and **Export/Import log** moves a workpaper between machines. The ledger is designed as the sync unit, so a server would only need an append endpoint and a subscription.
+- **A tiny backend.** The server only appends and lists events: `/api/ledger` and `/api/files`, about 120 lines in total. Each event is stored under its own unique, time-ordered key, so simultaneous saves never overwrite each other. Load testing found that a single shared document with compare-and-swap lost writes, which is why it uses per-event keys. Browsers poll every 2 seconds, and changes appear on other machines within about 2 seconds. A watermark re-reads a short window, so late writes from another server instance are never missed. There is no login: the role switcher stands in for authentication, so masking and the view log demonstrate the rules rather than enforce them against a determined user.
+- **Front end without a build step.** Preact + htm, vendored at 13 KB.
 - **Simulated documents.** Pages are rendered from `printed_content`, and values are highlighted by locating them in the text. Trace links point at `(document, page, field position)`, so a real PDF renderer could replace `views/docpage.js` without changing any link.
 - **Tax effects from rates.** As the README in the packet instructs, effects are change × rate per category, or the engine's exact result for what-ifs. Where second-order effects matter (QBI, SEP limit, SALT cap), the check either computes them or says so.
 

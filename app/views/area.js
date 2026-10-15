@@ -76,7 +76,7 @@ function LinesTable({ lines }) {
         const ver = st.verifications.get('line:' + l.key);
         const notes = [...st.notes.values()].filter(n => n.target === 'line:' + l.key && n.status === 'open').length;
         return html`<tr class=${adj ? 'adjusted' : ''}>
-          <td class="cb">${app.can('verify') && html`<input type="checkbox" checked=${sel.has(l.key)} onChange=${e => { const s = new Set(sel); e.target.checked ? s.add(l.key) : s.delete(l.key); setSel(s); }} />`}</td>
+          <td class="cb">${app.can('verify') && html`<input type="checkbox" checked=${sel.has(l.key)} onChange=${e => { const on = e.target.checked; setSel(prev => { const s = new Set(prev); on ? s.add(l.key) : s.delete(l.key); return s; }); }} />`}</td>
           <td class="key"><button class="link" onClick=${() => app.openTrace(l.key)}>${l.key}</button></td>
           <td>${l.label}${l.note ? html`<span class="muted small" title=${l.note}> ⓘ</span>` : ''}</td>
           <td class="r">${adj ? html`<s class="muted">${fmtValue(l)}</s>` : fmtValue(l)}</td>

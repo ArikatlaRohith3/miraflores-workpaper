@@ -49,7 +49,7 @@ function Changes() {
     ${!list.length && html`<div class="empty">No changes here. Adopt findings from <a href="#/checks">Independent checks</a> or use "Adjust" on any line.</div>`}
     ${list.length > 0 && html`<table class="list adjs"><thead><tr><th></th><th>Line</th><th class="r">Engine</th><th class="r">Workpaper</th><th>Why / authority</th><th>Tax effect</th><th>By</th><th>Status</th><th></th></tr></thead><tbody>
       ${list.map(a => html`<tr class=${a.layer === 'amendment' ? 'amend' : ''}>
-        <td>${['proposed', 'awaiting_partner'].includes(a.status) && html`<input type="checkbox" checked=${sel.has(a.id)} onChange=${e => { const s = new Set(sel); e.target.checked ? s.add(a.id) : s.delete(a.id); setSel(s); }} />`}</td>
+        <td>${['proposed', 'awaiting_partner'].includes(a.status) && html`<input type="checkbox" checked=${sel.has(a.id)} onChange=${e => { const on = e.target.checked; setSel(prev => { const s = new Set(prev); on ? s.add(a.id) : s.delete(a.id); return s; }); }} />`}</td>
         <td><${Ref} r=${a.key.startsWith('household') ? a.key.split('.')[0] : a.key} label=${a.key} /><div class="small muted">${a.label || ''}</div></td>
         <td class="r"><${Money} v=${a.from} /></td><td class="r"><b><${Money} v=${a.to} /></b></td>
         <td class="small">${a.reason}<div class="muted">${a.authority || ''}${a.checkId ? ` · from check ${a.checkId}` : ''}${a.whatIf ? ` · engine what-if ${a.whatIf}` : ''}</div></td>

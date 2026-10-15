@@ -1,4 +1,5 @@
 import { html, useState, useEffect, useRef, useApp, Modal } from '../ui.js';
+import { maskText } from '../model.js';
 
 // Search across lines, documents, extracted values, lots, client answers, messages and people.
 export function SearchPalette({ onClose }) {
@@ -39,7 +40,9 @@ function search(model, app, q) {
   for (const p of model.packet.household.people) if (p.name.toLowerCase().includes(q)) add({ kind: 'person', ref: 'household:' + p.id, title: p.name, sub: p.role });
   for (const e of model.packet.extracted_values) {
     if (out.length >= 40) break;
-    if ((isNum && e.value === num) || (!isNum && typeof e.value === 'string' && e.value.toLowerCase().includes(q)) || e.label.toLowerCase().includes(q)) add({ kind: 'value', ref: e.id, title: `${e.document_id} · ${e.label}`, sub: String(e.value) });
+    const secret = ['ssn', 'account_number'].includes(e.value_type) || /pin/i.test(e.field);
+    if (secret && !e.label.toLowerCase().includes(q)) continue; // never searchable by the identifier itself
+    if ((isNum && e.value === num) || (!isNum && typeof e.value === 'string' && e.value.toLowerCase().includes(q)) || e.label.toLowerCase().includes(q)) add({ kind: 'value', ref: e.id, title: `${e.document_id} · ${e.label}`, sub: secret ? '•••• (masked)' : String(e.value) });
   }
   return out;
 }

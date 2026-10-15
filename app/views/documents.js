@@ -3,7 +3,7 @@ import { docDispositions } from './readiness.js';
 import { DocPage } from './docpage.js';
 import { Conf } from './trace.js';
 import { JudgmentForm } from './forms.js';
-import { personName } from '../model.js';
+import { personName, maskText } from '../model.js';
 
 const STATUS_KIND = { used: 'ok', evidence: 'info', reference: 'neutral', administrative: 'neutral', superseded: 'warn', duplicate: 'warn', unplaced: 'bad', disposed: 'ok' };
 
@@ -65,7 +65,7 @@ function DocViewer({ docId, evId }) {
         <h4>Values read on page ${page} (${evs.length})</h4>
         <input class="filter" placeholder="Filter values…" value=${q} onInput=${e => setQ(e.target.value)} />
         <div class="ev-list">${evs.slice(0, 200).map(e => html`<button class=${'ev-item' + (e.id === sel ? ' on' : '') + (e.confidence < 0.7 ? ' low' : '')} onClick=${() => setSel(e.id)}>
-          <span>${e.label}</span><span class="num">${typeof e.value === 'number' ? e.value.toLocaleString() : String(e.value ?? '(blank)')}</span><${Conf} c=${e.confidence} />
+          <span>${e.label}</span><span class="num">${typeof e.value === 'number' ? e.value.toLocaleString() : ['ssn', 'account_number'].includes(e.value_type) || /pin/i.test(e.field) ? maskText(String(e.value)).replace(/^\d{5,6}$/, '••••••') : String(e.value ?? '(blank)')}</span><${Conf} c=${e.confidence} />
         </button>`)}</div>
         ${sel && html`<div class="small"><button class="link" onClick=${() => app.openTrace(sel)}>Trace ${sel} →</button></div>`}
         <h4>Landed on (${disp.lines.length})</h4>
