@@ -253,3 +253,17 @@ mark.low { background: var(--bad-bg); outline: 1px dashed var(--bad); }
   .modal-bg { position: static; background: none; padding: 0; } .modal { box-shadow: none; max-height: none; width: 100%; }
   .shell { height: auto; } body { background: #fff; }
 }
+
+/* workspace, notifications, years */
+.ws-chip { position: relative; }
+.ws-pop { position: absolute; right: 0; top: 30px; width: 340px; z-index: 40; }
+.bell { position: relative; }
+.bell .icon { position: relative; font-size: 17px; }
+.bell-n { position: absolute; top: -4px; right: -4px; background: var(--bad); color: #fff; border-radius: 99px; font-size: 10px; padding: 0 5px; font-weight: 700; }
+.bell-pop { position: absolute; right: 0; top: 32px; width: 380px; max-height: 70vh; overflow-y: auto; z-index: 40; }
+.bell-pop h3 { margin-bottom: 6px; }
+.bell-item { display: block; padding: 6px 8px; border-radius: 6px; color: var(--ink); font-size: 13px; border-left: 3px solid var(--line); margin: 3px 0; }
+.bell-item:hover { background: var(--bg); text-decoration: none; }
+.bell-item.blocking, .bell-item.reopened { border-left-color: var(--bad); } .bell-item.approve { border-left-color: var(--warn); } .bell-item.question, .bell-item.reply { border-left-color: var(--info); }
+.years { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.year { margin: 0; } .year.current { border-color: var(--accent); }

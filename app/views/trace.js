@@ -4,7 +4,7 @@ import { html, useState, useApp, Money, Delta, Badge, Ref, Refs, Sensitive, fmtD
 import { refKind, resolvePointer, paramValue, fmtValue, fmtMoney, areaOf, AREAS, personName } from '../model.js';
 import { adjustmentFor } from '../ledger.js';
 import { DocPage } from './docpage.js';
-import { AdjustForm, VerifyForm, NoteForm, JudgmentForm, AttachForm, effectText } from './forms.js';
+import { AdjustForm, VerifyForm, NoteForm, JudgmentForm, AttachForm, LinkForm, effectText } from './forms.js';
 
 export function TraceDrawer({ r, onClose, back }) {
   const k = refKind(r);
@@ -28,6 +28,8 @@ function Activity({ target }) {
   const notes = [...st.notes.values()].filter(n => n.target === target);
   const judg = st.judgments.filter(j => j.target === target);
   const att = [...st.attachments.values()].filter(a => a.target === target);
+  const links = st.links.filter(l => l.from === target || l.to === target);
+  const { ledger } = useApp();
   const [tab, setTab] = useState(null);
   return html`<div class="activity">
     <h4>Verification ${ver.length ? html`<${Badge} kind="ok">${ver.length}</${Badge}>` : html`<${Badge} kind="warn">not verified</${Badge}>`}</h4>
@@ -35,14 +37,17 @@ function Activity({ target }) {
     <${VerifyForm} target=${target} compact=${true} />
     ${judg.length > 0 && html`<h4>Judgments & dispositions</h4>${judg.map(j => html`<div class="act-row"><${Badge}>${j.kind.replace(/_/g, ' ')}</${Badge}> ${j.decision} <span class="muted">— ${personName(model, j.by)}, ${fmtDate(j.at)}${j.authority ? ' · ' + j.authority : ''}</span></div>`)}`}
     ${notes.length > 0 && html`<h4>Notes & questions</h4>${notes.map(n => html`<${NoteCard} n=${n} />`)}`}
-    ${att.length > 0 && html`<h4>Attached evidence</h4>${att.map(a => html`<div class="act-row">📎 ${a.dataUrl ? html`<a href=${a.dataUrl} download=${a.name}>${a.name}</a>` : a.name} <span class="muted">${Math.round(a.size / 1024)} KB · ${personName(model, a.by)}</span></div>`)}`}
+    ${att.length > 0 && html`<h4>Attached evidence</h4>${att.map(a => html`<div class="act-row">📎 ${a.fileId ? html`<a href=${ledger.fileUrl(a.fileId)} target="_blank" rel="noopener">${a.name}</a>` : a.dataUrl ? html`<a href=${a.dataUrl} download=${a.name}>${a.name}</a>` : a.name} <span class="muted">${Math.round(a.size / 1024)} KB · ${personName(model, a.by)}</span></div>`)}`}
+    ${links.length > 0 && html`<h4>Linked items</h4>${links.map(l => html`<div class="act-row">↔ <${Ref} r=${l.from === target ? l.to : l.from} /> <span class="muted small">${l.note || ''} — ${personName(model, l.by)}</span></div>`)}`}
     <div class="act-buttons">
       <button class="small" onClick=${() => setTab(tab === 'note' ? null : 'note')}>Note / question</button>
       <button class="small" onClick=${() => setTab(tab === 'j' ? null : 'j')}>Record judgment</button>
+      <button class="small" onClick=${() => setTab(tab === 'link' ? null : 'link')}>Link to…</button>
       <${AttachForm} target=${target} />
     </div>
     ${tab === 'note' && html`<${NoteForm} target=${target} onDone=${() => setTab(null)} />`}
     ${tab === 'j' && html`<${JudgmentForm} target=${target} onDone=${() => setTab(null)} />`}
+    ${tab === 'link' && html`<${LinkForm} target=${target} onDone=${() => setTab(null)} />`}
   </div>`;
 }
 

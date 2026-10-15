@@ -1,2 +1,3 @@
 smoke-out/
 node_modules/
+.netlify/

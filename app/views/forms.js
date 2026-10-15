@@ -121,14 +121,36 @@ export function AttachForm({ target, onDone }) {
   const [busy, setBusy] = useState(false);
   const onFile = async e => {
     const f = e.target.files[0]; if (!f) return;
-    if (f.size > 1_500_000) { app.notify('Files over 1.5 MB are recorded by name only in this prototype.', 'error'); }
+    if (!app.can('attach')) { app.notify(`${app.user.role} cannot attach evidence.`, 'error'); return; }
+    const shared = app.ledger.mode === 'shared';
+    const limit = shared ? 4_000_000 : 1_500_000;
+    if (f.size > limit) { app.notify(`${f.name} is ${(f.size / 1e6).toFixed(1)} MB; the limit is ${limit / 1e6} MB.`, 'error'); e.target.value = ''; return; }
     setBusy(true);
-    const dataUrl = f.size <= 1_500_000 ? await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(f); }) : null;
-    const ev = app.act('attach', { target, name: f.name, type: f.type, size: f.size, dataUrl }, { perm: 'attach' });
-    setBusy(false);
-    if (ev) { app.notify(`Attached ${f.name}`); onDone?.(); }
+    try {
+      const dataUrl = await new Promise((r, j) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = j; fr.readAsDataURL(f); });
+      const fileId = shared ? await app.ledger.uploadFile(f, dataUrl) : null;
+      const ev = app.act('attach', { target, name: f.name, type: f.type, size: f.size, fileId, dataUrl: shared ? null : dataUrl }, { perm: 'attach' });
+      if (ev) { app.notify(`Attached ${f.name}`); onDone?.(); }
+    } catch (err) { app.notify(`Could not attach ${f.name}: ${err.message}`, 'error'); }
+    setBusy(false); e.target.value = '';
   };
   return html`<label class="attach"><input type="file" onChange=${onFile} disabled=${busy} /> <span class="link">${busy ? 'Saving…' : '+ Attach file as evidence'}</span></label>`;
+}
+
+export function LinkForm({ target, onDone }) {
+  const app = useApp();
+  const [to, setTo] = useState('');
+  const [note, setNote] = useState('');
+  const submit = () => {
+    const ref = to.trim();
+    if (!ref) return;
+    const { model } = app;
+    const known = model.current.byKey.has(ref) || model.ev.has(ref) || model.docs.has(ref) || model.qa.has(ref) || model.msg.has(ref) || /^(py:|agency:|asset:|household:|doc:|v\d|call-|timeline:)/.test(ref);
+    if (!known) { app.notify(`Unknown reference "${ref}". Use a line key (F1040.11), document (D23), value (ev-0226), py:/..., household:ada…`, 'error'); return; }
+    const e = app.act('link', { from: target, to: ref, note }, { perm: 'note' });
+    if (e) { app.notify('Linked'); setTo(''); setNote(''); onDone?.(); }
+  };
+  return html`<div class="note-form"><div class="row"><input placeholder="Link to: line key, D-number, ev-id, py:/…, household:…" value=${to} onInput=${e => setTo(e.target.value)} /><input placeholder="Why (optional)" value=${note} onInput=${e => setNote(e.target.value)} /><button class="small primary" onClick=${submit}>Link</button></div></div>`;
 }
 
 export function effectText(e) {

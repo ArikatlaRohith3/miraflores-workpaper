@@ -14,6 +14,8 @@ import { FilingView } from './views/filing.js';
 import { FirmView } from './views/firm.js';
 import { ClientView } from './views/client.js';
 import { SearchPalette } from './views/search.js';
+import { RelatedView } from './views/related.js';
+import { NotificationBell } from './views/notifications.js';
 
 const START_CLOCK = '2026-06-23T09:00:00Z'; // just after engine v3 — "now" for the workpaper
 
@@ -43,7 +45,8 @@ function parseHash() {
 
 function App({ model, ledger }) {
   const [events, setEvents] = useState(ledger.events);
-  useEffect(() => ledger.subscribe(setEvents), []);
+  const [syncStatus, setSyncStatus] = useState(ledger.status);
+  useEffect(() => ledger.subscribe(ev => { setEvents(ev); setSyncStatus(ledger.status); }), []);
   const [route, setRoute] = useState(parseHash());
   useEffect(() => { const h = () => setRoute(parseHash()); window.addEventListener('hashchange', h); return () => window.removeEventListener('hashchange', h); }, []);
 
@@ -70,17 +73,18 @@ function App({ model, ledger }) {
   }, []);
 
   const can = perm => (PERMS[user.role] || []).includes(perm);
+  const staffInactive = !!(user.activeFrom && user.activeFrom > clock.slice(0, 10));
   const frozen = !!st.filing.frozen;
   const app = {
     model, st, events, checks, user, users: allUsers, clock, can, frozen, ledger,
     act(type, data, opts = {}) {
       const need = opts.perm;
       if (need && !can(need)) { notify(`${user.name} (${user.role}) is not allowed to ${need.replace('_', ' ')}.`, 'error'); return null; }
-      return ledger.append({ type, data, batch: opts.batch }, { actor: user.id, role: user.role, clock: opts.clock || clock })[0];
+      return ledger.append({ type, data, batch: opts.batch }, { actor: user.id, role: user.role, clock: opts.clock || clock, flag: staffInactive ? 'inactive_staff' : undefined })[0];
     },
     actMany(list, opts = {}) {
       if (opts.perm && !can(opts.perm)) { notify(`Not allowed for ${user.role}.`, 'error'); return []; }
-      return ledger.append(list.map(x => ({ type: x.type, data: x.data, clock: x.clock })), { actor: user.id, role: user.role, clock });
+      return ledger.append(list.map(x => ({ type: x.type, data: x.data, clock: x.clock })), { actor: user.id, role: user.role, clock, flag: staffInactive ? 'inactive_staff' : undefined });
     },
     undo(ids, label) {
       ledger.append({ type: 'revert', data: { ids, label } }, { actor: user.id, role: user.role, clock });
@@ -105,6 +109,7 @@ function App({ model, ledger }) {
     { id: 'adjustments', label: 'Changes & versions', badge: pendingAdj.length ? html`<${Badge} kind="warn">${pendingAdj.length}</${Badge}>` : null },
     { id: 'review', label: 'Review & questions', badge: openNotes.length ? html`<${Badge} kind=${openNotes.some(n => n.blocking) ? 'bad' : 'warn'}>${openNotes.length}</${Badge}>` : null },
     { id: 'documents', label: 'Documents' },
+    { id: 'related', label: 'Years & related returns' },
     { sep: 'Areas' },
     ...AREAS.map(a => ({ id: 'area/' + a.id, label: a.name, area: a.id })),
     { sep: 'Season' },
@@ -124,10 +129,9 @@ function App({ model, ledger }) {
   else if (p0 === 'filing') view = html`<${FilingView} />`;
   else if (p0 === 'firm') view = html`<${FirmView} />`;
   else if (p0 === 'client') view = html`<${ClientView} preview=${true} />`;
+  else if (p0 === 'related') view = html`<${RelatedView} />`;
   else view = html`<${Overview} sinceSeen=${sinceSeen} />`;
   const current = route.parts.join('/');
-
-  const staffInactive = user.activeFrom && user.activeFrom > clock.slice(0, 10);
 
   return html`<${Ctx.Provider} value=${app}>
     <div class="shell">
@@ -137,6 +141,8 @@ function App({ model, ledger }) {
         <button class="search-btn" onClick=${() => setSearchOpen(true)}>Search anything <kbd>Ctrl K</kbd></button>
         <div class="clock" title="Season clock — advance it from Filing & after">◷ ${fmtDateTime(clock)}</div>
         ${frozen && html`<${Badge} kind="info" title="Return filed; changes now go to an amendment layer">Filed · frozen</${Badge}>`}
+        <${WorkspaceChip} ledger=${ledger} status=${syncStatus} />
+        <${NotificationBell} />
         <label class="role">
           <span class="muted">Acting as</span>
           <select value=${user.id} onChange=${e => { setUserId(e.target.value); if (allUsers.find(u => u.id === e.target.value)?.role === 'client') location.hash = '#/client'; }}>
@@ -150,7 +156,7 @@ function App({ model, ledger }) {
           ${nav.map(n => n.sep ? html`<div class="nav-sep">${n.sep}</div>`
             : html`<a href=${'#/' + n.id} class=${current === n.id || (current === '' && n.id === 'overview') ? 'on' : ''}>
               <span>${n.label}</span>${n.badge || ''}</a>`)}
-          <div class="nav-foot muted">${events.length} recorded actions · saved in this browser</div>
+          <div class="nav-foot muted">${events.length} recorded actions · ${ledger.mode === 'shared' ? html`saved on the server (workspace <b>${ledger.ws}</b>)` : 'saved in this browser'}</div>
         </nav>
         <main class="main">${view}</main>
         ${trace && html`<${TraceDrawer} r=${trace} back=${traceStack.length ? () => { setTrace(traceStack[traceStack.length - 1]); setTraceStack(s => s.slice(0, -1)); } : null} onClose=${() => { setTrace(null); setTraceStack([]); }} />`}
@@ -161,11 +167,30 @@ function App({ model, ledger }) {
   </${Ctx.Provider}>`;
 }
 
+function WorkspaceChip({ ledger, status }) {
+  const [open, setOpen] = useState(false);
+  const label = ledger.mode === 'shared' ? { live: 'live', saving: 'saving…', offline: 'offline — retrying' }[status] || status : 'this browser only';
+  const kind = ledger.mode === 'shared' ? (status === 'offline' ? 'bad' : status === 'saving' ? 'warn' : 'ok') : 'neutral';
+  const sandbox = () => { const id = 'sandbox-' + Math.random().toString(36).slice(2, 8); location.href = location.pathname + '?ws=' + id + location.hash; };
+  return html`<span class="ws-chip">
+    <button class="link small" onClick=${() => setOpen(!open)} title="Where this workpaper is saved"><${Badge} kind=${kind}>● ${label}</${Badge}> <span class="muted">${ledger.ws}</span></button>
+    ${open && html`<div class="ws-pop card">
+      ${ledger.mode === 'shared'
+        ? html`<p class="small">Everything you do is saved on the server in workspace <b>${ledger.ws}</b>. Anyone who opens this link sees the same workpaper, and changes from other people appear within about two seconds.</p>`
+        : html`<p class="small">No server found, so the workpaper is saved in this browser and shared between its tabs only.</p>`}
+      <div class="row"><button class="small" onClick=${sandbox}>Open a new private sandbox</button>
+      <button class="small" onClick=${() => { navigator.clipboard?.writeText(location.href); setOpen(false); }}>Copy link to this workspace</button></div>
+    </div>`}
+  </span>`;
+}
+
 async function boot() {
   const root = document.getElementById('app');
   try {
     const model = await loadPacket('data/packet.json');
-    const ledger = createLedger();
+    const ws = (new URLSearchParams(location.search).get('ws') || 'demo').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40) || 'demo';
+    const ledger = await createLedger(ws);
+    window.__ledger = ledger;
     window.__model = model;
     render(html`<${App} model=${model} ledger=${ledger} />`, root);
   } catch (err) {

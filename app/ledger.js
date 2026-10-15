@@ -5,54 +5,134 @@
 
 import { areaOf, hash } from './model.js';
 
-const STORAGE_KEY = 'miraflores.workpaper.CL-20417.ledger.v1';
 const CHANNEL = 'miraflores-workpaper';
+const POLL_MS = 2000;
 
-export function createLedger() {
-  let events = load();
+// Two storage modes behind one interface:
+//  - shared: the server (/api/ledger) holds the canonical log per workspace and
+//    assigns the order; every browser polls it, so people on different machines
+//    see each other's work within seconds;
+//  - local: no server reachable (e.g. opened with a plain static server) — the log
+//    lives in this browser and syncs between its tabs.
+export async function createLedger(ws) {
+  const storageKey = `miraflores.workpaper.CL-20417.${ws}.v2`;
+  const api = `api/ledger?ws=${encodeURIComponent(ws)}`;
+  let mode = 'local';
+  let events = [];
+  let status = 'local';
   const listeners = new Set();
-  let bc = null;
+  const pending = new Map(); // id -> event waiting for the server
   try {
-    bc = new BroadcastChannel(CHANNEL);
-    bc.onmessage = () => { events = load(); emit(); };
-  } catch { /* no live sync available */ }
-  window.addEventListener('storage', e => { if (e.key === STORAGE_KEY) { events = load(); emit(); } });
+    const r = await fetch(api, { cache: 'no-store' });
+    if (r.ok && (r.headers.get('content-type') || '').includes('json')) { events = (await r.json()).events; mode = 'shared'; status = 'live'; }
+  } catch { /* no server */ }
+  if (mode === 'local') events = loadLocal();
 
-  function load() {
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }
+  let bc = null;
+  try { bc = new BroadcastChannel(`${CHANNEL}-${ws}`); bc.onmessage = () => (mode === 'local' ? (events = loadLocal(), emit()) : pull()); } catch { }
+  window.addEventListener('storage', e => { if (mode === 'local' && e.key === storageKey) { events = loadLocal(); emit(); } });
+
+  function loadLocal() { try { return JSON.parse(localStorage.getItem(storageKey) || '[]'); } catch { return []; } }
+  function saveLocal() { try { localStorage.setItem(storageKey, JSON.stringify(events)); } catch (err) { alert('Could not save to browser storage: ' + err.message); } }
+  function emit() { for (const l of listeners) l(events, status); }
+  const maxServerSeq = () => events.reduce((m, e) => (e.pending ? m : Math.max(m, e.seq)), 0);
+
+  function merge(incoming) {
+    if (!incoming.length) return false;
+    const byId = new Map(events.map(e => [e.id, e]));
+    for (const e of incoming) { byId.set(e.id, e); pending.delete(e.id); }
+    const confirmed = [...byId.values()].filter(e => !pending.has(e.id));
+    const waiting = [...pending.values()];
+    confirmed.sort((a, b) => a.seq - b.seq);
+    let s = confirmed.length ? confirmed[confirmed.length - 1].seq : 0;
+    events = [...confirmed, ...waiting.map(e => ({ ...e, seq: ++s }))];
+    return true;
   }
-  function save() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(events)); }
-    catch (err) { alert('Could not save to browser storage: ' + err.message); }
+
+  let pulling = false;
+  async function pull() {
+    if (mode !== 'shared' || pulling) return;
+    pulling = true;
+    try {
+      const r = await fetch(`${api}&since=${maxServerSeq()}`, { cache: 'no-store' });
+      if (r.ok) {
+        const d = await r.json();
+        if (d.total < maxServerSeq()) { events = d.events; pending.clear(); emit(); } // workspace was reset elsewhere
+        else if (merge(d.events)) emit();
+        if (status !== 'live') { status = 'live'; emit(); }
+      } else if (status !== 'offline') { status = 'offline'; emit(); }
+    } catch { if (status !== 'offline') { status = 'offline'; emit(); } }
+    pulling = false;
   }
-  function emit() { for (const l of listeners) l(events); }
+  async function push(list, tries = 0) {
+    try {
+      const r = await fetch(api, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ events: list.map(({ pending: _p, seq: _s, ...rest }) => rest) }) });
+      if (!r.ok) throw new Error(String(r.status));
+      const d = await r.json();
+      merge(d.stored); status = 'live'; emit(); bc?.postMessage('changed');
+    } catch {
+      status = 'offline'; emit();
+      if (tries < 20) setTimeout(() => push(list.filter(e => pending.has(e.id)), tries + 1), Math.min(30000, 1000 * 2 ** tries));
+    }
+  }
+  if (mode === 'shared') {
+    setInterval(pull, POLL_MS);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) pull(); });
+  }
 
   return {
     get events() { return events; },
+    get mode() { return mode; },
+    get status() { return pending.size ? 'saving' : status; },
+    ws,
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
-    // Append one or many events. Returns the stored events (with seq and id).
+    // Append one or many events. Returns them immediately (optimistic); in shared
+    // mode the server confirms and may renumber seq.
     append(input, ctx) {
       const list = Array.isArray(input) ? input : [input];
-      const batch = list.length > 1 ? `b${Date.now().toString(36)}` : undefined;
+      const batch = list.length > 1 ? `b${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}` : undefined;
       let seq = events.length ? events[events.length - 1].seq : 0;
-      const stored = list.map(e => ({
+      const stored = list.map(({ clock, batch: b, ...e }) => ({
+        ...e,
         seq: ++seq,
-        id: `e${seq}-${Math.random().toString(36).slice(2, 6)}`,
+        id: `e${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
         at: new Date().toISOString(),
-        clock: e.clock || ctx.clock,
+        clock: clock || ctx.clock,
         actor: ctx.actor,
         role: ctx.role,
-        batch: e.batch || batch,
-        ...e,
+        batch: b || batch,
+        ...(ctx.flag ? { flag: ctx.flag } : {}),
       }));
-      events = [...events, ...stored];
-      save();
-      bc?.postMessage('changed');
-      emit();
+      if (mode === 'shared') {
+        for (const e of stored) { e.pending = true; pending.set(e.id, e); }
+        events = [...events, ...stored];
+        emit();
+        push(stored);
+      } else {
+        events = [...events, ...stored];
+        saveLocal(); bc?.postMessage('changed'); emit();
+      }
       return stored;
     },
-    replaceAll(list) { events = list; save(); bc?.postMessage('changed'); emit(); },
-    reset() { events = []; save(); bc?.postMessage('changed'); emit(); },
+    async replaceAll(list) {
+      if (mode === 'shared') {
+        await fetch(api, { method: 'DELETE' });
+        const clean = list.map(({ seq: _s, pending: _p, serverAt: _a, ...e }) => e);
+        for (let i = 0; i < clean.length; i += 400) await fetch(api, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ events: clean.slice(i, i + 400) }) });
+        events = []; pending.clear(); await pull(); bc?.postMessage('changed'); emit();
+      } else { events = list; saveLocal(); bc?.postMessage('changed'); emit(); }
+    },
+    async reset() {
+      if (mode === 'shared') { await fetch(api, { method: 'DELETE' }); events = []; pending.clear(); emit(); bc?.postMessage('changed'); }
+      else { events = []; saveLocal(); bc?.postMessage('changed'); emit(); }
+    },
+    async uploadFile(file, dataUrl) {
+      if (mode !== 'shared') return null;
+      const r = await fetch(`api/files?ws=${encodeURIComponent(ws)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: file.name, type: file.type, size: file.size, dataUrl }) });
+      if (!r.ok) throw new Error(`upload failed (${r.status})`);
+      return (await r.json()).id;
+    },
+    fileUrl(id) { return `api/files?ws=${encodeURIComponent(ws)}&id=${encodeURIComponent(id)}`; },
   };
 }
 
@@ -108,6 +188,7 @@ export function fold(model, events, opts = {}) {
     notices: new Map(),
     lastSeen: {},
     overrides: new Map(), // non-line corrections, e.g. household:theo.ssn
+    links: [],
     events: [],
   };
 
@@ -153,6 +234,7 @@ export function fold(model, events, opts = {}) {
       case 'replay': st.replayed.add(d.timelineId); applyReplay(st, d, e); break;
       case 'filing': applyFiling(st, d, e); break;
       case 'seen': st.lastSeen[e.actor] = d.seq; break;
+      case 'link': st.links.push({ id: e.id, ...d, by: e.actor, at: e.clock }); break;
       default: break;
     }
   }
