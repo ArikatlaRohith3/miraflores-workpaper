@@ -22,9 +22,10 @@ export async function createLedger(ws) {
   let status = 'local';
   const listeners = new Set();
   const pending = new Map(); // id -> event waiting for the server
+  let epoch = null;
   try {
     const r = await fetch(api, { cache: 'no-store' });
-    if (r.ok && (r.headers.get('content-type') || '').includes('json')) { events = (await r.json()).events; mode = 'shared'; status = 'live'; }
+    if (r.ok && (r.headers.get('content-type') || '').includes('json')) { const d = await r.json(); epoch = d.epoch; events = renumber(dedupe(d.events)); mode = 'shared'; status = 'live'; }
   } catch { /* no server */ }
   if (mode === 'local') events = loadLocal();
 
@@ -35,17 +36,29 @@ export async function createLedger(ws) {
   function loadLocal() { try { return JSON.parse(localStorage.getItem(storageKey) || '[]'); } catch { return []; } }
   function saveLocal() { try { localStorage.setItem(storageKey, JSON.stringify(events)); } catch (err) { alert('Could not save to browser storage: ' + err.message); } }
   function emit() { for (const l of listeners) l(events, status); }
-  const maxServerSeq = () => events.reduce((m, e) => (e.pending ? m : Math.max(m, e.seq)), 0);
+  // Server order is key order (server time). Events still in flight sort last.
+  function dedupe(list) { const m = new Map(); for (const e of list) if (!m.has(e.id)) m.set(e.id, e); return [...m.values()]; }
+  function renumber(list) {
+    const confirmed = list.filter(e => !pending.has(e.id)).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    return [...confirmed, ...[...pending.values()]].map((e, i) => (e.seq === i + 1 ? e : { ...e, seq: i + 1 }));
+  }
+  // Re-read a short window behind the newest event so a late write from another
+  // server instance (slightly older timestamp) is never missed.
+  const watermark = () => {
+    const keys = events.filter(e => e.key).map(e => e.key);
+    if (!keys.length) return '';
+    const newest = keys[keys.length - 1];
+    const t = Number(newest.split('/e/')[1].slice(0, 14)) - 20000;
+    return newest.split('/e/')[0] + '/e/' + String(Math.max(0, t)).padStart(14, '0');
+  };
 
   function merge(incoming) {
-    if (!incoming.length) return false;
+    const before = events.length;
     const byId = new Map(events.map(e => [e.id, e]));
-    for (const e of incoming) { byId.set(e.id, e); pending.delete(e.id); }
-    const confirmed = [...byId.values()].filter(e => !pending.has(e.id));
-    const waiting = [...pending.values()];
-    confirmed.sort((a, b) => a.seq - b.seq);
-    let s = confirmed.length ? confirmed[confirmed.length - 1].seq : 0;
-    events = [...confirmed, ...waiting.map(e => ({ ...e, seq: ++s }))];
+    let changed = false;
+    for (const e of incoming) { if (!byId.has(e.id) || byId.get(e.id).pending || !byId.get(e.id).key) { byId.set(e.id, e); changed = true; } pending.delete(e.id); }
+    if (!changed && before === byId.size) return false;
+    events = renumber([...byId.values()]);
     return true;
   }
 
@@ -54,11 +67,13 @@ export async function createLedger(ws) {
     if (mode !== 'shared' || pulling) return;
     pulling = true;
     try {
-      const r = await fetch(`${api}&since=${maxServerSeq()}`, { cache: 'no-store' });
+      const wm = watermark();
+      const r = await fetch(`${api}${wm ? '&after=' + encodeURIComponent(wm) : ''}`, { cache: 'no-store' });
       if (r.ok) {
         const d = await r.json();
-        if (d.total < maxServerSeq()) { events = d.events; pending.clear(); emit(); } // workspace was reset elsewhere
-        else if (merge(d.events)) emit();
+        if (d.epoch !== epoch) { // workspace was reset elsewhere: reload in full
+          await reloadFull();
+        } else if (merge(d.events)) emit();
         if (status !== 'live') { status = 'live'; emit(); }
       } else if (status !== 'offline') { status = 'offline'; emit(); }
     } catch { if (status !== 'offline') { status = 'offline'; emit(); } }
@@ -74,6 +89,10 @@ export async function createLedger(ws) {
       status = 'offline'; emit();
       if (tries < 20) setTimeout(() => push(list.filter(e => pending.has(e.id)), tries + 1), Math.min(30000, 1000 * 2 ** tries));
     }
+  }
+  async function reloadFull() {
+    const d = await (await fetch(api, { cache: 'no-store' })).json();
+    epoch = d.epoch; pending.clear(); events = renumber(dedupe(d.events)); emit();
   }
   if (mode === 'shared') {
     setInterval(pull, POLL_MS);
@@ -117,15 +136,20 @@ export async function createLedger(ws) {
     async replaceAll(list) {
       if (mode === 'shared') {
         await fetch(api, { method: 'DELETE' });
-        const clean = list.map(({ seq: _s, pending: _p, serverAt: _a, ...e }) => e);
-        for (let i = 0; i < clean.length; i += 400) await fetch(api, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ events: clean.slice(i, i + 400) }) });
-        events = []; pending.clear(); await pull(); bc?.postMessage('changed'); emit();
+        const clean = list.map(({ seq: _s, pending: _p, serverAt: _a, key: _k, ...e }) => e);
+        for (let i = 0; i < clean.length; i += 400) {
+          const r = await fetch(api, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ events: clean.slice(i, i + 400) }) });
+          if (!r.ok) throw new Error(`import failed (${r.status})`);
+          await new Promise(res => setTimeout(res, 5)); // keep batches in time order
+        }
+        await reloadFull(); bc?.postMessage('changed');
       } else { events = list; saveLocal(); bc?.postMessage('changed'); emit(); }
     },
     async reset() {
-      if (mode === 'shared') { await fetch(api, { method: 'DELETE' }); events = []; pending.clear(); emit(); bc?.postMessage('changed'); }
+      if (mode === 'shared') { await fetch(api, { method: 'DELETE' }); await reloadFull(); bc?.postMessage('changed'); }
       else { events = []; saveLocal(); bc?.postMessage('changed'); emit(); }
     },
+    reload: () => (mode === 'shared' ? reloadFull() : null),
     async uploadFile(file, dataUrl) {
       if (mode !== 'shared') return null;
       const r = await fetch(`api/files?ws=${encodeURIComponent(ws)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: file.name, type: file.type, size: file.size, dataUrl }) });
