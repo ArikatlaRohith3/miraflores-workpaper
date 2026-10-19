@@ -79,6 +79,11 @@ export default async (req) => {
   }
 
   if (req.method === 'DELETE') {
+    // The shared demo workspace can only be reset by the owner (RESET_TOKEN); private sandboxes by anyone using them.
+    if (ws === 'demo') {
+      const token = process.env.RESET_TOKEN;
+      if (!token || req.headers.get('x-reset-token') !== token) return json({ error: 'The shared demo workspace can only be reset by its owner. Open a private sandbox to start fresh.' }, 403);
+    }
     const { blobs } = await store.list({ prefix: `${ws}/` });
     for (let i = 0; i < blobs.length; i += 50) await Promise.all(blobs.slice(i, i + 50).map(b => store.delete(b.key).catch(() => { })));
     await store.set(`${ws}/epoch`, String(Date.now()));

@@ -221,11 +221,11 @@ function Records() {
   };
   const imp = e => {
     const f = e.target.files[0]; if (!f) return;
-    f.text().then(t => { const d = JSON.parse(t); if (confirm(`Replace this browser's workpaper with ${d.ledger.length} recorded actions from ${f.name}?`)) ledger.replaceAll(d.ledger); });
+    f.text().then(t => { const d = JSON.parse(t); if (confirm(`Replace this workspace with ${d.ledger.length} recorded actions from ${f.name}?`)) ledger.replaceAll(d.ledger).catch(err => app.notify(err.message, 'error')); });
   };
   return html`<${Section} title="Workpaper record">
     <p class="small muted">The packet is never modified. The workpaper is the packet plus this append-only log. Export it to archive (retention: 7 years after filing) or to move it to another machine.</p>
     <div class="row"><button onClick=${exp}>Export log</button><label class="attach"><input type="file" accept=".json" onChange=${imp} /><span class="link">Import log…</span></label>
-      ${app.user.role === 'firm_administrator' && html`<button class="danger" onClick=${() => confirm('Erase every recorded action in this browser?') && ledger.reset()}>Reset demo</button>`}</div>
+      ${app.user.role === 'firm_administrator' && html`<button class="danger" onClick=${() => confirm('Erase every recorded action in this workspace?') && ledger.reset().then(() => app.notify('Workspace reset')).catch(err => app.notify(err.message, 'error'))}>Reset demo</button>`}</div>
   </${Section}>`;
 }

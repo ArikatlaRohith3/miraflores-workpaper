@@ -135,7 +135,8 @@ export async function createLedger(ws) {
     },
     async replaceAll(list) {
       if (mode === 'shared') {
-        await fetch(api, { method: 'DELETE' });
+        const del = await fetch(api, { method: 'DELETE' });
+        if (!del.ok) throw new Error((await del.json().catch(() => ({}))).error || `import failed (${del.status})`);
         const clean = list.map(({ seq: _s, pending: _p, serverAt: _a, key: _k, ...e }) => e);
         for (let i = 0; i < clean.length; i += 400) {
           const r = await fetch(api, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ events: clean.slice(i, i + 400) }) });
@@ -146,7 +147,11 @@ export async function createLedger(ws) {
       } else { events = list; saveLocal(); bc?.postMessage('changed'); emit(); }
     },
     async reset() {
-      if (mode === 'shared') { await fetch(api, { method: 'DELETE' }); await reloadFull(); bc?.postMessage('changed'); }
+      if (mode === 'shared') {
+        const r = await fetch(api, { method: 'DELETE' });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `reset failed (${r.status})`);
+        await reloadFull(); bc?.postMessage('changed');
+      }
       else { events = []; saveLocal(); bc?.postMessage('changed'); emit(); }
     },
     reload: () => (mode === 'shared' ? reloadFull() : null),
