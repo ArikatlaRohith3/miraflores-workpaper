@@ -15,3 +15,5 @@ CREATE TABLE IF NOT EXISTS files (
   name TEXT, type TEXT, size INTEGER, data TEXT NOT NULL,
   PRIMARY KEY (ws, id, part)
 );
+-- Gemini models that recently hit a quota limit, shared by all Worker instances.
+CREATE TABLE IF NOT EXISTS model_cooldown (model TEXT PRIMARY KEY, until INTEGER NOT NULL);

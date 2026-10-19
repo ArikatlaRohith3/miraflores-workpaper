@@ -136,6 +136,7 @@ const TASKS = {
 const SCHEMA = { type: 'OBJECT', properties: { answer: { type: 'STRING' }, verdict: { type: 'STRING' }, citations: { type: 'ARRAY', items: { type: 'STRING' } }, missing: { type: 'STRING' } }, required: ['answer', 'citations'] };
 
 let modelCache = null;
+const cooldown = new Map(); // model -> time it may be used again (after a 429)
 async function availableModels(key) {
   if (modelCache && Date.now() - modelCache.at < 3600_000) return modelCache.list;
   try {
@@ -158,7 +159,8 @@ function hedgeSet(live, preferred) {
   const lite = ranked.filter(n => /lite/.test(n));
   const full = ranked.filter(n => !/lite/.test(n));
   const pick = [preferred, lite[0], live.includes('gemini-flash-lite-latest') && 'gemini-flash-lite-latest', live.includes('gemini-flash-latest') && 'gemini-flash-latest', full.find(n => !/latest/.test(n)), lite[1], full[1]];
-  const out = [...new Set(pick.filter(Boolean))].slice(0, 4);
+  // Free-tier quotas are per model, so keep every current flash model as a fallback.
+  const out = [...new Set([...pick, ...ranked].filter(Boolean))].slice(0, 8);
   return out.length ? out : MODEL_FALLBACKS;
 }
 async function callGemini(key, model, task, context, budgetMs, question) {
@@ -187,23 +189,50 @@ async function ai(req, env) {
   if (typeof context !== 'string' || !context.length) return json(req, { error: 'missing context' }, 400);
   if (task === 'ask' && !question.trim()) return json(req, { error: 'missing question' }, 400);
   const ctx = context.slice(0, MAX_CONTEXT);
-  const models = hedgeSet(await availableModels(key), env.GEMINI_MODEL);
+  const all = hedgeSet(await availableModels(key), env.GEMINI_MODEL);
+  try { // cooldowns are shared by all Worker instances through D1
+    const { results } = await env.DB.prepare('SELECT model, until FROM model_cooldown WHERE until > ?').bind(Date.now()).all();
+    for (const r of results) cooldown.set(r.model, Math.max(cooldown.get(r.model) || 0, r.until));
+  } catch { }
+  const resting = all.filter(m => (cooldown.get(m) || 0) > Date.now());
+  const models = [...all.filter(m => !resting.includes(m)), ...resting]; // rate-limited models go last
   const attempts = [];
   const t0 = Date.now();
   const budget = task === 'review_memo' || task === 'notice_letter' ? 25_000 : 20_000;
+  // Staggered hedging: start the best model; start the next one only if no answer
+  // arrives within STAGGER_MS or the current one fails. Usually one call per
+  // question, so the free-tier quota lasts; slow or busy models are still covered.
+  const STAGGER_MS = 2500;
   const winner = await new Promise(resolve => {
-    let pending = models.length;
-    for (const model of models) {
+    let started = 0, finished = 0, done = false, timer = null;
+    const launch = () => {
+      if (done || started >= models.length) return;
+      const model = models[started++];
+      clearTimeout(timer);
+      timer = setTimeout(launch, STAGGER_MS);
       callGemini(key, model, task, ctx, budget, question).then(({ status, body }) => {
         attempts.push({ model, status, ms: Date.now() - t0 });
+        if (status === 429) { // rate-limited: rest it for a minute, or until tomorrow if its daily quota is gone
+          const daily = JSON.stringify(body?.error?.details || '').includes('PerDay');
+          const until = Date.now() + (daily ? 6 * 3600_000 : 60_000);
+          cooldown.set(model, until);
+          env.DB.prepare('INSERT INTO model_cooldown (model, until) VALUES (?, ?) ON CONFLICT(model) DO UPDATE SET until = excluded.until').bind(model, until).run().catch(() => { });
+        }
         const text = body?.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
         if (status === 200 && text) {
           let out; try { out = JSON.parse(text); } catch { out = { answer: text, citations: [] }; }
-          if (out.answer) return resolve({ ...out, model });
+          if (out.answer && !done) { done = true; clearTimeout(timer); return resolve({ ...out, model }); }
         }
-        if (--pending === 0) resolve(null);
-      }).catch(() => { attempts.push({ model, status: 'timeout', ms: Date.now() - t0 }); if (--pending === 0) resolve(null); });
-    }
+        failed();
+      }).catch(() => { attempts.push({ model, status: 'timeout', ms: Date.now() - t0 }); failed(); });
+    };
+    const failed = () => {
+      finished++;
+      if (done) return;
+      if (started < models.length) launch(); // fail fast to the next model
+      else if (finished >= started) { done = true; clearTimeout(timer); resolve(null); }
+    };
+    if (!models.length) resolve(null); else launch();
   });
   if (winner) return json(req, { ...winner, ms: Date.now() - t0, attempts, truncated: context.length > MAX_CONTEXT });
   const busy = attempts.some(a => a.status === 503 || a.status === 'timeout' || a.status === 429);

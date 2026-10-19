@@ -10,6 +10,14 @@ import { checkResolution, readiness } from './readiness.js';
 import { API } from '../api.js';
 
 let statusPromise = null;
+
+// POST to the AI endpoint; if Gemini is busy, wait a moment and try once more.
+async function postAi(payload, retries = 1) {
+  const r = await fetch(API + 'api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+  const d = await r.json().catch(() => ({}));
+  if ((r.status === 503 || r.status === 429) && retries > 0) { await new Promise(res => setTimeout(res, 4000)); return postAi(payload, retries - 1); }
+  return { r, d };
+}
 export function aiStatus() {
   if (!statusPromise) statusPromise = fetch(API + 'api/ai', { cache: 'no-store' }).then(r => (r.ok ? r.json() : { configured: false })).catch(() => ({ configured: false }));
   return statusPromise;
@@ -169,8 +177,7 @@ export function AiPanel({ task, target, label, compact }) {
     setSt({ phase: 'loading' });
     const { text, refs } = buildContext(app, task, target);
     try {
-      const r = await fetch(API + 'api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task, context: text }) });
-      const d = await r.json();
+      const { r, d } = await postAi({ task, context: text });
       if (!r.ok) throw new Error(d.error || `AI error ${r.status}`);
       const cites = normalizeCites(d.citations);
       const unverified = cites.filter(c => !validRef(app, c));
@@ -213,8 +220,7 @@ export function AiPanel({ task, target, label, compact }) {
 
 export async function askAi(app, task, target, question) {
   const { text, refs } = buildContext(app, task, target);
-  const r = await fetch(API + 'api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task, context: text, question }) });
-  const d = await r.json();
+  const { r, d } = await postAi({ task, context: text, question });
   if (!r.ok) throw new Error(d.error || `AI error ${r.status}`);
   const cites = normalizeCites(d.citations);
   const unverified = cites.filter(c => !validRef(app, c));
