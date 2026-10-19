@@ -37,7 +37,7 @@ async function callGemini(key, model, task, context, budgetMs) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), budgetMs); // each model gets a slice of the function's time limit
   const long = task === 'review_memo' || task === 'notice_letter';
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+  const res = fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: 'POST',
     signal: ctrl.signal,
     headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
@@ -47,9 +47,12 @@ async function callGemini(key, model, task, context, budgetMs) {
       generationConfig: { temperature: 0.2, responseMimeType: 'application/json', responseSchema: SCHEMA, maxOutputTokens: long ? 2048 : 900,
         ...(/2\.5|flash-latest/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}) },
     }),
-  }).finally(() => clearTimeout(timer));
-  const body = await r.json().catch(() => ({}));
-  return { status: r.status, body };
+  });
+  try {
+    const r = await res;
+    const body = await r.json().catch(err => { if (err.name === 'AbortError') throw err; return {}; }); // the budget covers the whole body too
+    return { status: r.status, body };
+  } finally { clearTimeout(timer); }
 }
 
 export default async (req) => {
@@ -65,7 +68,8 @@ export default async (req) => {
   const ctx = context.slice(0, MAX_CONTEXT);
   const models = [process.env.GEMINI_MODEL, ...MODEL_FALLBACKS].filter(Boolean);
   let last = null;
-  const deadline = Date.now() + 24_000;
+  const attempts = [];
+  const deadline = Date.now() + 20_000;
   for (const [i, model] of models.entries()) {
     const t0 = Date.now();
     const left = deadline - t0;
@@ -73,17 +77,18 @@ export default async (req) => {
     const budget = i === models.length - 1 ? left : Math.min(left, task === 'review_memo' || task === 'notice_letter' ? 12_000 : 8_000);
     let res;
     try { res = await callGemini(key, model, task, ctx, budget); }
-    catch (err) { last = { status: 504, body: { error: { message: err.name === 'AbortError' ? 'The AI took too long to answer. Try again.' : err.message } } }; continue; }
+    catch (err) { attempts.push({ model, status: 'timeout', ms: Date.now() - t0 }); last = { status: 504, body: { error: { message: err.name === 'AbortError' ? 'The AI is busy and took too long to answer. Try again in a moment.' : err.message } } }; continue; }
     const { status, body } = res;
+    attempts.push({ model, status, ms: Date.now() - t0 });
     // Not available to this key, overloaded or out of quota: try the next model.
     if ([404, 429, 500, 503].includes(status)) { last = { status, body }; continue; }
     if (status !== 200) return json({ error: body?.error?.message || `Gemini error ${status}` }, status === 429 ? 429 : 502);
     const text = body?.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
     let out;
     try { out = JSON.parse(text); } catch { out = { answer: text, citations: [] }; }
-    return json({ ...out, model, ms: Date.now() - t0, truncated: context.length > MAX_CONTEXT });
+    return json({ ...out, model, ms: Date.now() - t0, attempts, truncated: context.length > MAX_CONTEXT });
   }
-  return json({ error: last?.body?.error?.message || 'No Gemini model available for this key' }, last?.status === 504 ? 504 : 502);
+  return json({ error: last?.body?.error?.message || 'No Gemini model available for this key', attempts }, last?.status === 504 ? 504 : 502);
 };
 
 export const config = { path: '/api/ai' };
