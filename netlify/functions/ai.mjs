@@ -33,6 +33,26 @@ const SCHEMA = {
 
 const json = (b, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 
+// Ask Google which models this key can use (model names change over time), cached per instance.
+let modelCache = null;
+async function availableModels(key) {
+  if (modelCache && Date.now() - modelCache.at < 3600_000) return modelCache.list;
+  try {
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key }, signal: AbortSignal.timeout(4000) });
+    const d = await r.json();
+    const list = (d.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent')).map(m => m.name.replace(/^models\//, ''));
+    modelCache = { at: Date.now(), list };
+    return list;
+  } catch { return []; }
+}
+// Prefer fast, current "flash" models; avoid previews, image/audio/tts and embedding variants.
+function pickModels(list) {
+  const ok = list.filter(n => /gemini/.test(n) && /flash/.test(n) && !/(image|audio|tts|live|embed|thinking|exp|preview|8b)/.test(n));
+  const ver = n => Number((/gemini-(\d+(?:\.\d+)?)/.exec(n) || [])[1] || 0);
+  const rank = n => (/latest/.test(n) ? 0.5 : 0) + ver(n) * 10 + (/lite/.test(n) ? -1 : 0);
+  return ok.sort((a, b) => rank(b) - rank(a));
+}
+
 async function callGemini(key, model, task, context, budgetMs) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), budgetMs); // each model gets a slice of the function's time limit
@@ -48,16 +68,23 @@ async function callGemini(key, model, task, context, budgetMs) {
         ...(/2\.5|flash-latest/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}) },
     }),
   });
+  const timeout = new Promise((_, rej) => setTimeout(() => { const e = new Error('timeout'); e.name = 'AbortError'; rej(e); }, budgetMs + 200));
   try {
-    const r = await res;
-    const body = await r.json().catch(err => { if (err.name === 'AbortError') throw err; return {}; }); // the budget covers the whole body too
-    return { status: r.status, body };
+    return await Promise.race([timeout, (async () => {
+      const r = await res;
+      const body = await r.json().catch(err => { if (err.name === 'AbortError') throw err; return {}; }); // the budget covers the whole body too
+      return { status: r.status, body };
+    })()]);
   } finally { clearTimeout(timer); }
 }
 
 export default async (req) => {
   const key = process.env.GEMINI_API_KEY;
-  if (req.method === 'GET') return json({ configured: !!key, model: process.env.GEMINI_MODEL || MODEL_FALLBACKS[0] });
+  if (req.method === 'GET') {
+    const url = new URL(req.url);
+    if (url.searchParams.has('models') && key) return json({ models: await availableModels(key) });
+    return json({ configured: !!key, model: process.env.GEMINI_MODEL || MODEL_FALLBACKS[0] });
+  }
   if (req.method !== 'POST') return json({ error: 'method' }, 405);
   if (!key) return json({ error: 'AI is not configured on this deployment (GEMINI_API_KEY missing).' }, 501);
   let input;
@@ -66,7 +93,8 @@ export default async (req) => {
   if (!TASKS[task]) return json({ error: 'unknown task' }, 400);
   if (typeof context !== 'string' || !context.length) return json({ error: 'missing context' }, 400);
   const ctx = context.slice(0, MAX_CONTEXT);
-  const models = [process.env.GEMINI_MODEL, ...MODEL_FALLBACKS].filter(Boolean);
+  const live = await availableModels(key);
+  const models = [...new Set([process.env.GEMINI_MODEL, ...pickModels(live), ...MODEL_FALLBACKS])].filter(Boolean).slice(0, 4);
   let last = null;
   const attempts = [];
   const deadline = Date.now() + 20_000;
