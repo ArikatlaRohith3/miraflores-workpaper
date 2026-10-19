@@ -5,7 +5,7 @@
 //  - output is a suggestion: a person accepts or discards it, and both are logged.
 import { html, useState, useEffect, useApp, Badge, Ref } from '../ui.js';
 import { maskText, refKind, fmtMoney, personName } from '../model.js';
-import { adjustmentFor, position } from '../ledger.js';
+import { adjustmentFor, position, taxEffect } from '../ledger.js';
 import { checkResolution, readiness } from './readiness.js';
 
 let statusPromise = null;
@@ -87,7 +87,11 @@ export function buildContext(app, task, target) {
       parts.push(`[${k}] ${l.label}: engine ${l.value}${a ? `, workpaper ${a.to} (${a.status})` : ''}; 2024: ${m.pyLines[k] ?? 'n/a'}`);
     }
     for (const a of st.adjustments.values()) { refs.add(a.key); parts.push(`Change [${a.key}] ${a.status} by ${personName(m, a.by)}: ${a.from} -> ${a.to}. ${a.reason} Effect fed tax ${a.effect.fedTax}, CA tax ${a.effect.caTax}, fed payments ${a.effect.fedPay}, CA payments ${a.effect.caPay}.`); }
-    for (const c of checks) { refs.add('check:' + c.id); parts.push(`Check [check:${c.id}] ${c.status}, resolution ${checkResolution(c, st)}: ${c.title}`); }
+    for (const c of checks) {
+      refs.add('check:' + c.id);
+      const eff = (c.proposals || []).reduce((t, p) => { const e = taxEffect(m, p); return { fed: t.fed + e.fedTax - e.fedPay, ca: t.ca + e.caTax - e.caPay }; }, { fed: 0, ca: 0 });
+      parts.push(`Check [check:${c.id}] ${c.status}, resolution ${checkResolution(c, st)}: ${c.title}${(c.proposals || []).length ? `. If adopted: federal balance ${eff.fed >= 0 ? '+' : ''}${eff.fed}, California balance ${eff.ca >= 0 ? '+' : ''}${eff.ca}` : ''}${(c.questions || []).length ? `. Question for the client: ${c.questions.join(' ')}` : ''}`);
+    }
     for (const n of st.notes.values()) if (n.status === 'open') parts.push(`Open ${n.kind}${n.blocking ? ' (BLOCKS FILING)' : ''}${n.to ? ' to ' + (n.to === 'client' ? 'client' : personName(m, n.to)) : ''}: ${n.text}`);
     for (const j of st.judgments) parts.push(`Judgment (${j.kind}) on ${j.target}: ${j.decision}`);
     for (const sg of st.signoffs) parts.push(`Sign-off: ${sg.scope} by ${personName(m, sg.by)} as ${sg.level}`);
@@ -214,7 +218,7 @@ export async function askAi(app, task, target, question) {
   return { ...d, citations: cites, unverified, eventId: ev?.id, refs };
 }
 
-const SUGGESTED = ['What is still blocking filing?', 'Why is the federal balance different from the engine?', 'Which changes need partner approval?', 'What did the prior preparer get wrong?', 'What do we still need from the client?', 'How was California-source income split?'];
+const SUGGESTED = ['What is still blocking filing?', 'Which findings have the biggest tax effect?', 'What would the refund be if every proposed fix is adopted?', 'What questions should we ask the client?', 'What did the prior preparer get wrong?', 'How were wages split between California and Texas?'];
 
 // "Ask the workpaper": questions about the whole return, answered from it with citations.
 export function AskPanel({ onClose }) {
