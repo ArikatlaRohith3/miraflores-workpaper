@@ -94,29 +94,41 @@ export default async (req) => {
   if (typeof context !== 'string' || !context.length) return json({ error: 'missing context' }, 400);
   const ctx = context.slice(0, MAX_CONTEXT);
   const live = await availableModels(key);
-  const models = [...new Set([process.env.GEMINI_MODEL, ...pickModels(live), ...MODEL_FALLBACKS])].filter(Boolean).slice(0, 4);
-  let last = null;
+  const models = hedgeSet(live);
+  // Hedged requests: ask several current models at once and keep the first usable answer.
+  // Free-tier Gemini models are often busy; this keeps latency low without guessing which.
   const attempts = [];
-  const deadline = Date.now() + 20_000;
-  for (const [i, model] of models.entries()) {
-    const t0 = Date.now();
-    const left = deadline - t0;
-    if (left < 3000) break;
-    const budget = i === models.length - 1 ? left : Math.min(left, task === 'review_memo' || task === 'notice_letter' ? 12_000 : 8_000);
-    let res;
-    try { res = await callGemini(key, model, task, ctx, budget); }
-    catch (err) { attempts.push({ model, status: 'timeout', ms: Date.now() - t0 }); last = { status: 504, body: { error: { message: err.name === 'AbortError' ? 'The AI is busy and took too long to answer. Try again in a moment.' : err.message } } }; continue; }
-    const { status, body } = res;
-    attempts.push({ model, status, ms: Date.now() - t0 });
-    // Not available to this key, overloaded or out of quota: try the next model.
-    if ([404, 429, 500, 503].includes(status)) { last = { status, body }; continue; }
-    if (status !== 200) return json({ error: body?.error?.message || `Gemini error ${status}` }, status === 429 ? 429 : 502);
-    const text = body?.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
-    let out;
-    try { out = JSON.parse(text); } catch { out = { answer: text, citations: [] }; }
-    return json({ ...out, model, ms: Date.now() - t0, attempts, truncated: context.length > MAX_CONTEXT });
-  }
-  return json({ error: last?.body?.error?.message || 'No Gemini model available for this key', attempts }, last?.status === 504 ? 504 : 502);
+  const t0 = Date.now();
+  const long = task === 'review_memo' || task === 'notice_letter';
+  const budget = long ? 22_000 : 18_000;
+  const winner = await new Promise(resolve => {
+    let pending = models.length;
+    if (!pending) resolve(null);
+    for (const model of models) {
+      callGemini(key, model, task, ctx, budget).then(({ status, body }) => {
+        attempts.push({ model, status, ms: Date.now() - t0 });
+        const text = body?.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
+        if (status === 200 && text) {
+          let out; try { out = JSON.parse(text); } catch { out = { answer: text, citations: [] }; }
+          if (out.answer) return resolve({ ...out, model });
+        }
+        if (--pending === 0) resolve(null);
+      }).catch(() => { attempts.push({ model, status: 'timeout', ms: Date.now() - t0 }); if (--pending === 0) resolve(null); });
+    }
+  });
+  if (winner) return json({ ...winner, ms: Date.now() - t0, attempts, truncated: context.length > MAX_CONTEXT });
+  const busy = attempts.some(a => a.status === 503 || a.status === 'timeout' || a.status === 429);
+  return json({ error: busy ? 'Gemini is very busy right now. Try again in a moment.' : 'No Gemini model answered for this key.', attempts }, 503);
 };
+
+// Up to four candidates: the newest stable flash-lite, the "latest" aliases and a full flash model.
+function hedgeSet(live) {
+  const ranked = pickModels(live);
+  const lite = ranked.filter(n => /lite/.test(n));
+  const full = ranked.filter(n => !/lite/.test(n));
+  const pick = [process.env.GEMINI_MODEL, lite[0], live.includes('gemini-flash-lite-latest') && 'gemini-flash-lite-latest', live.includes('gemini-flash-latest') && 'gemini-flash-latest', full.find(n => !/latest/.test(n)), lite[1], full[1]];
+  const out = [...new Set(pick.filter(Boolean))].slice(0, 4);
+  return out.length ? out : MODEL_FALLBACKS;
+}
 
 export const config = { path: '/api/ai' };
