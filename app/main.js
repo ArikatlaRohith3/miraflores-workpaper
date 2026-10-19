@@ -17,6 +17,8 @@ import { SearchPalette } from './views/search.js';
 import { RelatedView } from './views/related.js';
 import { NotificationBell } from './views/notifications.js';
 import { DocsView } from './views/docsview.js';
+import { AskPanel } from './views/ai.js';
+import { Tour, shouldAutoStartTour } from './views/tour.js';
 
 const START_CLOCK = '2026-06-23T09:00:00Z'; // just after engine v3 — "now" for the workpaper
 
@@ -67,6 +69,8 @@ function App({ model, ledger }) {
   const [trace, setTrace] = useState(null);
   const [traceStack, setTraceStack] = useState([]);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [askOpen, setAskOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(() => shouldAutoStartTour() && user.role !== 'client');
   const [toast, setToast] = useState(null);
   useEffect(() => {
     const h = e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearchOpen(true); } };
@@ -148,6 +152,8 @@ function App({ model, ledger }) {
         <button class="search-btn" onClick=${() => setSearchOpen(true)}>Search anything <kbd>Ctrl K</kbd></button>
         <div class="clock" title="Season clock — advance it from Filing & after">◷ ${fmtDateTime(clock)}</div>
         ${frozen && html`<${Badge} kind="info" title="Return filed; changes now go to an amendment layer">Filed · frozen</${Badge}>`}
+        ${!isClient && html`<button class="small ai-btn ask-btn" onClick=${() => setAskOpen(!askOpen)} title="Ask a question about this return (AI, cited)">✦ Ask</button>`}
+        ${!isClient && html`<button class="small" onClick=${() => setTourOpen(true)} title="Guided tour for new users">? Tour</button>`}
         <${WorkspaceChip} ledger=${ledger} status=${syncStatus} />
         <${NotificationBell} />
         <label class="role">
@@ -166,9 +172,11 @@ function App({ model, ledger }) {
           <div class="nav-foot muted">${events.length} recorded actions · ${ledger.mode === 'shared' ? html`saved on the server (workspace <b>${ledger.ws}</b>)` : 'saved in this browser'}</div>
         </nav>
         <main class="main">${view}</main>
+        ${askOpen && !isClient && html`<${AskPanel} onClose=${() => setAskOpen(false)} />`}
         ${trace && html`<${TraceDrawer} r=${trace} back=${traceStack.length ? () => { setTrace(traceStack[traceStack.length - 1]); setTraceStack(s => s.slice(0, -1)); } : null} onClose=${() => { setTrace(null); setTraceStack([]); }} />`}
       </div>
       ${searchOpen && html`<${SearchPalette} onClose=${() => setSearchOpen(false)} />`}
+      ${tourOpen && !isClient && html`<${Tour} onClose=${() => { setTourOpen(false); setTrace(null); }} />`}
       ${toast && html`<div class=${'toast ' + toast.kind} role="status">${toast.text}${toast.undo && html` <button class="link" onClick=${() => { toast.undo(); setToast(null); }}>Undo</button>`}</div>`}
     </div>
   </${Ctx.Provider}>`;

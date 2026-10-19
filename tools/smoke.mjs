@@ -41,6 +41,7 @@ const steps = JSON.parse(process.env.STEPS || 'null') || [
     if (d.method === 'Log.entryAdded' && d.params.entry.level === 'error') errors.push('LOG ' + d.params.entry.text + ' ' + (d.params.entry.url || ''));
   });
   await send('Runtime.enable'); await send('Log.enable'); await send('Page.enable');
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: "try{localStorage.setItem('mwp.tour.done','1')}catch{}" });
   await send('Page.navigate', { url: base });
   await sleep(2500);
   if (process.env.PRE) await evalJs(process.env.PRE), await sleep(800);

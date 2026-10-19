@@ -74,6 +74,38 @@ export function buildContext(app, task, target) {
     for (const id of ['gross-receipts', 'vehicle-donation']) { const c = checks.find(x => x.id === id); refs.add('check:' + id); parts.push(`Reconciliation [check:${id}]: ${c.why} ${(c.rows || []).map(r => r.join(' = ')).join('; ')}`); }
     for (const r of ['D65', 'D66', 'D14', 'D15', 'D17', 'D21']) add(r);
   }
+  if (task === 'ask') {
+    const q = String(target || '').toLowerCase();
+    const pos = position(m, st, ['approved']); const all = position(m, st);
+    parts.push(`RETURN STATUS: ${st.filing.status}. Engine v3 federal tax ${m.current.summary.federal.total_tax}, payments ${m.current.summary.federal.payments}, balance ${m.current.summary.federal.balance_due} (positive = owed, negative = refund); California tax ${m.current.summary.california.total_tax}, payments ${m.current.summary.california.payments}, balance ${m.current.summary.california.balance_due}.`);
+    parts.push(`With approved workpaper changes: federal tax ${pos.federal.total_tax}, balance ${pos.federal.balance_due}; California tax ${pos.california.total_tax}, balance ${pos.california.balance_due}. Including proposed changes: federal balance ${all.federal.balance_due}, California ${all.california.balance_due}.`);
+    for (const k of ['F1040.1z', 'F1040.2b', 'F1040.7', 'F1040.8', 'F1040.11', 'F1040.12', 'F1040.15', 'F1040.16', 'F1040.24', 'F1040.33', 'F1040.37', 'F540NR.17', 'F540NR.32', 'F540NR.64', 'F540NR.78', 'F540NR.97']) {
+      const l = m.current.byKey.get(k); const a = adjustmentFor(st, k); refs.add(k);
+      parts.push(`[${k}] ${l.label}: engine ${l.value}${a ? `, workpaper ${a.to} (${a.status})` : ''}; 2024: ${m.pyLines[k] ?? 'n/a'}`);
+    }
+    for (const a of st.adjustments.values()) { refs.add(a.key); parts.push(`Change [${a.key}] ${a.status} by ${personName(m, a.by)}: ${a.from} -> ${a.to}. ${a.reason} Effect fed tax ${a.effect.fedTax}, CA tax ${a.effect.caTax}, fed payments ${a.effect.fedPay}, CA payments ${a.effect.caPay}.`); }
+    for (const c of checks) { refs.add('check:' + c.id); parts.push(`Check [check:${c.id}] ${c.status}, resolution ${checkResolution(c, st)}: ${c.title}`); }
+    for (const n of st.notes.values()) if (n.status === 'open') parts.push(`Open ${n.kind}${n.blocking ? ' (BLOCKS FILING)' : ''}${n.to ? ' to ' + (n.to === 'client' ? 'client' : personName(m, n.to)) : ''}: ${n.text}`);
+    for (const j of st.judgments) parts.push(`Judgment (${j.kind}) on ${j.target}: ${j.decision}`);
+    for (const sg of st.signoffs) parts.push(`Sign-off: ${sg.scope} by ${personName(m, sg.by)} as ${sg.level}`);
+    parts.push(`Assignments: ${Object.entries(st.assignments).map(([r, id]) => `${r} ${personName(m, id)}`).join(', ')}. Deadlines: ${m.packet.firm.deadlines.map(d => `${d.date} ${d.what}`).join('; ')}.`);
+    // Retrieval: the items whose words overlap the question most.
+    const stop = ['the', 'and', 'for', 'why', 'what', 'did', 'was', 'are', 'how', 'does', 'this', 'that', 'with', 'from', 'still', 'tax'];
+    const words = q.split(/[^a-z0-9.]+/).filter(w => w.length > 2 && !stop.includes(w));
+    const score = t => { t = t.toLowerCase(); return words.reduce((n, w) => n + (t.includes(w) ? 1 : 0), 0); };
+    const cands = [
+      ...m.current.lines.map(l => ({ r: l.key, s: score(`${l.key} ${l.label}`) })),
+      ...checks.map(c => ({ r: 'check:' + c.id, s: score(`${c.title} ${c.why}`) * 2, c })),
+      ...m.packet.documents.map(d => ({ r: d.id, s: score(`${d.id} ${d.title} ${d.issuer}`) })),
+      ...m.packet.client.questionnaire.map(x => ({ r: x.id, s: score(`${x.question} ${x.answer}`) })),
+      ...m.packet.client.messages.map(x => ({ r: x.id, s: score(x.text) })),
+    ].filter(x => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 18);
+    if (cands.length) parts.push('RELEVANT DETAIL:');
+    for (const x of cands) {
+      if (x.c) { refs.add(x.r); parts.push(`[${x.r}] ${x.c.title}. ${x.c.why} ${(x.c.rows || []).map(r => r.join(': ')).join('; ')}`); }
+      else add(x.r);
+    }
+  }
   // Never send identifiers to an outside model.
   return { text: maskText(parts.join('\n')), refs };
 }
@@ -163,7 +195,62 @@ export function AiPanel({ task, target, label, compact }) {
   </div>`;
 }
 
-const aiLabel = t => ({ explain_line: 'Explanation', second_opinion: 'Second opinion', client_question: 'Client question', review_memo: 'Review memo', notice_letter: 'Notice response letter' }[t]);
+export async function askAi(app, task, target, question) {
+  const { text, refs } = buildContext(app, task, target);
+  const r = await fetch('api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task, context: text, question }) });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || `AI error ${r.status}`);
+  const cites = [...new Set(d.citations || [])];
+  const unverified = cites.filter(c => !validRef(app, c));
+  const ev = app.act('ai', { task, target: task === 'ask' ? 'workpaper' : target, question: question || undefined, model: d.model, ms: d.ms, citations: cites, unverified, verdict: d.verdict || null, answer: d.answer, missing: d.missing || '' });
+  return { ...d, citations: cites, unverified, eventId: ev?.id, refs };
+}
+
+const SUGGESTED = ['What is still blocking filing?', 'Why is the federal balance different from the engine?', 'Which changes need partner approval?', 'What did the prior preparer get wrong?', 'What do we still need from the client?', 'How was California-source income split?'];
+
+// "Ask the workpaper": questions about the whole return, answered from it with citations.
+export function AskPanel({ onClose }) {
+  const app = useApp();
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [thread, setThread] = useState([]);
+  const [cfg, setCfg] = useState(null);
+  useEffect(() => { aiStatus().then(setCfg); }, []);
+  const ask = async (question) => {
+    const text = (question ?? q).trim(); if (!text || busy) return;
+    setBusy(true); setQ('');
+    setThread(t => [...t, { q: text, pending: true }]);
+    try { const d = await askAi(app, 'ask', text, text); setThread(t => t.map((x, i) => (i === t.length - 1 ? { q: text, d } : x))); }
+    catch (err) { setThread(t => t.map((x, i) => (i === t.length - 1 ? { q: text, error: err.message } : x))); }
+    setBusy(false);
+  };
+  const save = (x) => {
+    app.act('ai.decision', { aiEventId: x.d.eventId, decision: 'accept', task: 'ask' });
+    app.act('note', { kind: 'comment', text: `Q: ${x.q}\nA (AI draft, ${x.d.model}, accepted by ${app.user.name}): ${x.d.answer}`, target: 'return', source: 'ai', model: x.d.model }, { perm: 'note' });
+    app.notify('Saved to the workpaper as a note');
+  };
+  return html`<aside class="ask-panel" aria-label="Ask the workpaper">
+    <div class="drawer-h"><b>✦ Ask the workpaper</b><span class="muted small">Gemini · answers only from this return · identifiers masked</span><button class="icon right" onClick=${onClose} aria-label="Close">✕</button></div>
+    <div class="drawer-b">
+      ${cfg && !cfg.configured && html`<div class="banner warn">AI is not configured on this deployment.</div>`}
+      ${!thread.length && html`<div><p class="muted small">Ask anything about this return. Every answer cites the lines, documents and checks it relies on; unknown citations are flagged.</p>
+        <div class="suggest">${SUGGESTED.map(s => html`<button class="chip" onClick=${() => ask(s)}>${s}</button>`)}</div></div>`}
+      ${thread.map(x => html`<div class="ask-item">
+        <div class="ask-q">${x.q}</div>
+        ${x.pending ? html`<div class="muted small">Thinking…</div>` : x.error ? html`<div class="banner warn">${x.error}</div>` : html`<div class="ai-out">
+          <${AnswerText} text=${x.d.answer} />
+          <div class="small"><b>Cited:</b> ${x.d.citations.map(c => validRef(app, c) ? html`<${RefOrCheck} r=${c} />` : html`<span class="badge bad">${c}?</span>`)}
+            ${x.d.unverified.length ? html` <span class="warn-t">· ${x.d.unverified.length} not found in the packet</span>` : x.d.citations.length ? html` <span class="ok-t">· all verified</span>` : html` <span class="warn-t">· no citations</span>`}</div>
+          <div class="row"><span class="muted small">${x.d.model} · ${(x.d.ms / 1000).toFixed(1)} s</span><button class="small" onClick=${() => save(x)}>Save as note</button></div>
+        </div>`}
+      </div>`)}
+    </div>
+    <div class="ask-input"><input placeholder="e.g. Why did California tax go down?" value=${q} onInput=${e => setQ(e.target.value)} onKeyDown=${e => e.key === 'Enter' && ask()} disabled=${busy} />
+      <button class="primary small" onClick=${() => ask()} disabled=${busy || !q.trim()}>Ask</button></div>
+  </aside>`;
+}
+
+const aiLabel = t => ({ ask: 'Question', explain_line: 'Explanation', second_opinion: 'Second opinion', client_question: 'Client question', review_memo: 'Review memo', notice_letter: 'Notice response letter' }[t]);
 
 // Register of every AI call, for the firm (who used it, on what, accepted or not).
 export function AiLog() {

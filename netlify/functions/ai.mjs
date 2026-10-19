@@ -17,6 +17,7 @@ const TASKS = {
   second_opinion: 'Give an independent second opinion on this finding. Do you agree with it, partly agree, or disagree? Explain why from the evidence, list any risks or counter-arguments, and say what evidence would settle it. Set "verdict" to agree, partly_agree, disagree or insufficient_evidence.',
   client_question: 'Draft one short, friendly question to the client (non-expert) that would resolve this finding. No jargon, no tax law citations, one or two sentences, say exactly what document or answer you need. Put the question in "answer".',
   review_memo: 'Draft a reviewer memo for the file: return status, the significant findings and changes with their tax effect, open items, judgments and outside filings. Use short headed sections in plain text (no markdown tables).',
+  ask: 'Answer the QUESTION from a member of the firm about this workpaper, using only the CONTEXT. Be direct: lead with the answer, then the supporting facts with citations. Use numbers exactly as given. If the context does not contain the answer, say so plainly and say where in the workpaper they could look. Keep it under 180 words unless a list is clearly needed.',
   notice_letter: 'Draft a response letter to the IRS for this examination notice, addressing each item under examination with the supporting facts and listing enclosed documents. Formal, factual, no admissions beyond the facts in the context.',
 };
 
@@ -53,7 +54,7 @@ function pickModels(list) {
   return ok.sort((a, b) => rank(b) - rank(a));
 }
 
-async function callGemini(key, model, task, context, budgetMs) {
+async function callGemini(key, model, task, context, budgetMs, question = '') {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), budgetMs); // each model gets a slice of the function's time limit
   const long = task === 'review_memo' || task === 'notice_letter';
@@ -63,7 +64,7 @@ async function callGemini(key, model, task, context, budgetMs) {
     headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: SYSTEM }] },
-      contents: [{ role: 'user', parts: [{ text: `TASK: ${TASKS[task]}\n\nCONTEXT:\n${context}` }] }],
+      contents: [{ role: 'user', parts: [{ text: `TASK: ${TASKS[task]}\n\n${question ? `QUESTION: ${question}\n\n` : ''}CONTEXT:\n${context}` }] }],
       generationConfig: { temperature: 0.2, responseMimeType: 'application/json', responseSchema: SCHEMA, maxOutputTokens: long ? 2048 : 900,
         ...(/2\.5|flash-latest/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}) },
     }),
@@ -90,6 +91,8 @@ export default async (req) => {
   let input;
   try { input = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
   const { task, context } = input || {};
+  const question = typeof input?.question === 'string' ? input.question.slice(0, 500) : '';
+  if (task === 'ask' && !question.trim()) return json({ error: 'missing question' }, 400);
   if (!TASKS[task]) return json({ error: 'unknown task' }, 400);
   if (typeof context !== 'string' || !context.length) return json({ error: 'missing context' }, 400);
   const ctx = context.slice(0, MAX_CONTEXT);
@@ -105,7 +108,7 @@ export default async (req) => {
     let pending = models.length;
     if (!pending) resolve(null);
     for (const model of models) {
-      callGemini(key, model, task, ctx, budget).then(({ status, body }) => {
+      callGemini(key, model, task, ctx, budget, question).then(({ status, body }) => {
         attempts.push({ model, status, ms: Date.now() - t0 });
         const text = body?.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
         if (status === 200 && text) {

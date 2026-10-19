@@ -26,6 +26,7 @@ const HELPERS = `window.T = {
   drawer() { return document.querySelector('.drawer')?.textContent || ''; },
   toast() { return document.querySelector('.toast')?.textContent || ''; },
 };
+try { localStorage.setItem('mwp.tour.done', '1'); } catch {}
 window.confirm = () => true; window.prompt = () => 'Amendment for test';
 const _c = URL.createObjectURL; URL.createObjectURL = b => { window.__lastBlob = b; return _c(b); };
 HTMLAnchorElement.prototype.click = function () { window.__lastDownload = this.download; };`;
@@ -413,6 +414,32 @@ async function run() {
   check('Errors document rendered in the app with live links', await A.waitFor(`T.main().includes('Errors found, and how the design surfaced them') && document.querySelectorAll('code.linkable').length > 10`));
   await A.eval(`[...document.querySelectorAll('code.linkable')].find(c => c.textContent === 'rsu-basis').click()`);
   check('Clicking a check id in the document opens that check', await A.waitFor(`location.hash === '#/checks' && !!document.querySelector('.check-card.focused')`));
+
+  section('New-user tour and Ask the workpaper');
+  await A.as('st-01');
+  await A.eval(`T.ct('? Tour')`);
+  check('Guided tour starts and spotlights a real control', await A.waitFor(`!!document.querySelector('.tour-card') && !!document.querySelector('.tour-hole')`));
+  let steps = 0;
+  for (let i = 0; i < 12; i++) { const more = await A.eval(`T.ct('Next', '.tour-card')`); if (!more) break; steps++; await sleep(700); }
+  check('Tour walks through all its steps', steps >= 8 && await A.eval(`T.text('.tour-card').includes('Filing and after')`), `steps ${steps}`);
+  await A.eval(`T.ct('Start working', '.tour-card')`);
+  check('Tour closes and is remembered', await A.waitFor(`!document.querySelector('.tour') && localStorage.getItem('mwp.tour.done') === '1'`));
+  await A.eval(`T.ct('✦ Ask')`);
+  check('Ask panel opens with suggested questions', await A.waitFor(`!!document.querySelector('.ask-panel') && document.querySelectorAll('.ask-panel .suggest .chip').length >= 4`));
+  const askCtx = await A.eval(`(async () => { const m = await import('./app/views/ai.js'); return m.buildContext(__app, 'ask', 'What is still blocking filing?').text; })()`);
+  check('Ask context covers status, changes, checks and open notes (identifiers masked)', askCtx.includes('RETURN STATUS') && askCtx.includes('Check [check:') && !/666-\d\d-\d{4}/.test(askCtx));
+  if (!aiCfg.configured) {
+    await A.eval(`(() => { const f = window.fetch; window.fetch = (u, o) => String(u).startsWith('api/ai') && o?.method === 'POST'
+      ? Promise.resolve(new Response(JSON.stringify({ answer: 'Nothing blocks filing: the return was accepted [F1040.37].', citations: ['F1040.37'], model: 'simulated', ms: 500 }), { headers: { 'content-type': 'application/json' } }))
+      : f(u, o); return true; })()`);
+  }
+  await A.eval(`document.querySelector('.ask-panel .suggest .chip').click()`);
+  check('Ask answers with verified citations', await A.waitFor(`!!document.querySelector('.ask-panel .ai-out') && document.querySelectorAll('.ask-panel .ai-out .ref').length > 0`, 45000));
+  const askAns = await A.eval(`document.querySelector('.ask-panel .ai-out')?.textContent || ''`);
+  console.log('    answer: ' + askAns.slice(0, 260).replace(/\s+/g, ' '));
+  await A.eval(`T.ct('Save as note', '.ask-panel')`);
+  check('Answer saved to the workpaper as a note (person accepted)', await A.waitFor(`[...__app.st.notes.values()].some(n => n.source === 'ai' && n.text.startsWith('Q: '))`));
+  await A.eval(`document.querySelector('.ask-panel .icon.right').click()`);
 
   section('Errors');
   const errs = [...A.errors, ...B.errors];

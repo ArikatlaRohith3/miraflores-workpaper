@@ -283,3 +283,20 @@ mark.low { background: var(--bad-bg); outline: 1px dashed var(--bad); }
 .doc-md pre { background: var(--bg); padding: 10px; border-radius: 6px; overflow: auto; font-size: 12px; }
 .doc-md code.linkable { cursor: pointer; color: var(--accent); text-decoration: underline dotted; }
 .doc-md h1 { margin-top: 0; } .doc-md h2 { margin-top: 26px; }
+
+/* ask panel */
+.ask-panel { width: min(460px, 42vw); flex-shrink: 0; border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.ask-panel .drawer-b { flex: 1; }
+.ask-item { margin-bottom: 14px; }
+.ask-q { font-weight: 600; background: var(--bg); border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; }
+.ask-input { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--line); }
+.ask-input input { flex: 1; }
+.suggest { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.suggest .chip { text-align: left; }
+/* tour */
+.tour { position: fixed; inset: 0; z-index: 70; }
+.tour-dim { position: fixed; inset: 0; background: rgba(0,0,0,.45); }
+.tour-hole { position: fixed; border-radius: 10px; box-shadow: 0 0 0 9999px rgba(0,0,0,.45); outline: 2px solid var(--accent); transition: all .25s ease; pointer-events: none; }
+.tour-card { position: fixed; width: 360px; z-index: 71; box-shadow: 0 12px 40px rgba(0,0,0,.25); margin: 0; }
+.tour-card h3 { margin: 4px 0 6px; font-size: 16px; }
+.tour-card p { margin: 0 0 8px; font-size: 13.5px; }
