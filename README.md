@@ -44,11 +44,25 @@ Deploy with `netlify deploy --prod` (it uses `netlify.toml`). Without the functi
 
 `Ctrl K` searches everything: line keys, amounts, documents, securities, answers and people.
 
+## AI inside the workpaper (Google Gemini)
+
+- **Explain with AI** on any line, plus **AI second opinion** and **Draft client question** on any finding.
+- **Draft review memo** on the Review page, and **Draft response letter** for the IRS notice.
+
+Guardrails:
+- The model sees only an evidence bundle built for that one item (lines, extracted values, page text, client answers, checks).
+- SSNs, account numbers and PINs are masked before anything leaves the browser.
+- Every citation is checked against the packet. Unknown ones are flagged as possible hallucinations.
+- Output is a suggestion. A person accepts it (saved as a note or question, with the model name) or discards it.
+- Every call and decision is logged in Firm → AI usage log. Clients never see AI tools.
+
+The server (`netlify/functions/ai.mjs`) holds the key (`GEMINI_API_KEY`). It discovers which models the key can use, because model names are retired over time. It sends **hedged requests** to up to four current flash models and keeps the first good answer. Free-tier models are often busy, and this took typical latency from 15–30 s (or failure) to about 1–3 s.
+
 ## Tests
 
 ```bash
 node tools/run_checks.mjs                     # the 32 independent checks, headless
-node tools/e2e.mjs                            # 115 end-to-end checks of every requirement in the brief, run against the live site
+node tools/e2e.mjs                            # 126 end-to-end checks of every requirement in the brief, run against the live site
 node tools/e2e.mjs http://localhost:8888      # …or against netlify dev
 ```
 

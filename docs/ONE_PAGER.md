@@ -38,6 +38,8 @@ Derived (pure functions)
 
 **Tax effects** use the engine's per-dollar rates by category (with California-source overrides), or the engine's exact numbers when a change matches a what-if. The real system would recompute; the design keeps the effect on each change so totals stay explainable.
 
+**AI is a reviewer's assistant, not an author.** Gemini explains lines, gives second opinions on findings, and drafts client questions, review memos and the notice letter. It works only from an evidence bundle for that item, with identifiers masked. Its citations are verified against the packet, and its output enters the ledger only when a person accepts it. Every call is logged.
+
 ## Main tradeoffs
 
 - **The server is dumb on purpose.** It appends and lists events and does nothing else; all meaning lives in the fold on the client. Each event gets its own time-ordered key, so concurrent saves can't collide. A shared document with compare-and-swap lost writes under load testing, which is why it was rejected. Sync is 2-second polling: simple and good enough for a review team. Websockets would be the next step. There is no authentication: the role switcher stands in for logins, and roles are enforced in the action layer.
