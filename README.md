@@ -21,6 +21,8 @@ Deploy with `netlify deploy --prod` (it uses `netlify.toml`). Without the functi
 
 ## Five-minute tour
 
+New users get a 9-step guided tour on their first visit (**? Tour** in the top bar replays it). It spotlights the real controls: the three-way totals, readiness, tracing a number, checks, change history, roles, notifications, Ask and filing.
+
 1. **Acting as** (top right) switches between the six staff and the two clients. Roles are enforced on every action. Two examples:
    - Marcus Bell has no sensitive-data clearance, so he sees masked SSNs.
    - The administrator can edit firm standards but can't change the return.
@@ -46,6 +48,7 @@ Deploy with `netlify deploy --prod` (it uses `netlify.toml`). Without the functi
 
 ## AI inside the workpaper (Google Gemini)
 
+- **✦ Ask** (top bar): plain-English questions about the whole return, such as "What is still blocking filing?" or "Which findings have the biggest tax effect?". It retrieves the relevant lines, checks and documents and adds the firm's computed readiness and projected balances. Answers cite real ids.
 - **Explain with AI** on any line, plus **AI second opinion** and **Draft client question** on any finding.
 - **Draft review memo** on the Review page, and **Draft response letter** for the IRS notice.
 
@@ -62,7 +65,7 @@ The server (`netlify/functions/ai.mjs`) holds the key (`GEMINI_API_KEY`). It dis
 
 ```bash
 node tools/run_checks.mjs                     # the 32 independent checks, headless
-node tools/e2e.mjs                            # 126 end-to-end checks of every requirement in the brief, run against the live site
+node tools/e2e.mjs                            # 133 end-to-end checks of every requirement in the brief, run against the live site
 node tools/e2e.mjs http://localhost:8888      # …or against netlify dev
 ```
 
