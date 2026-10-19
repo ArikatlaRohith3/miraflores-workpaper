@@ -377,6 +377,43 @@ async function run() {
   const exported = await A.eval(`(async () => JSON.parse(await window.__lastBlob.text()).ledger.length)()`);
   check('Export of the full log', exported >= n, `exported ${exported}`);
 
+  section('AI assistance (guardrails)');
+  const aiCfg = await A.eval(`fetch('api/ai').then(r => r.json())`);
+  console.log(`  (AI ${aiCfg.configured ? 'configured: real Gemini calls' : 'not configured: using a simulated model response'})`);
+  if (!aiCfg.configured) {
+    await A.eval(`(() => { const f = window.fetch; window.fetch = (u, o) => String(u).startsWith('api/ai') && o?.method === 'POST'
+      ? Promise.resolve(new Response(JSON.stringify({ answer: 'Gross receipts were built from books revenue [D14] plus the 1099-K [D21]; the 1099-K is already inside the Atlas 1099-NEC [D17]. See [check:gross-receipts] and [D99].', verdict: 'agree', citations: ['D14', 'D21', 'D17', 'check:gross-receipts', 'D99'], model: 'simulated', ms: 900 }), { headers: { 'content-type': 'application/json' } }))
+      : f(u, o); window.__aiConfigured = false; return true; })()`);
+  }
+  await A.as('st-02');
+  await A.hash('#/checks');
+  await A.eval(`T.ct('Resolved')`);
+  await A.waitFor(`!!document.getElementById('chk-gross-receipts')`);
+  const ctxText = await A.eval(`(async () => { const m = await import('./app/views/ai.js'); return m.buildContext(__app, 'second_opinion', 'gross-receipts').text; })()`);
+  check('AI context is the evidence bundle for this finding (documents, lines, page text)', ctxText.includes('[D17]') && ctxText.includes('[SchC.1]') && ctxText.includes('Paywell'));
+  const ssnCtx = await A.eval(`(async () => { const m = await import('./app/views/ai.js'); return m.buildContext(__app, 'explain_line', 'F1040.1a').text; })()`);
+  check('Identifiers masked before anything is sent to the model', !/666-\d\d-\d{4}/.test(ssnCtx) && ssnCtx.includes('•••-••-'));
+  if (aiCfg.configured || true) {
+    await A.eval(`[...document.getElementById('chk-gross-receipts').querySelectorAll('button')].find(b => b.innerText.includes('AI second opinion')).click()`);
+    check('AI second opinion returns an answer with a verdict', await A.waitFor(`!!document.querySelector('#chk-gross-receipts .ai-out')`, 45000));
+    const aiTxt = await A.eval(`document.querySelector('#chk-gross-receipts .ai-out').textContent`);
+    check('Citations are clickable and verified against the packet', await A.eval(`document.querySelectorAll('#chk-gross-receipts .ai-out .ref').length > 0`));
+    if (!aiCfg.configured) check('Invented citation (D99) flagged as not in the packet', aiTxt.includes('D99?') && aiTxt.includes('not found in the packet'));
+    check('AI call logged with model and citation check', await A.eval(`__app.st.events.some(e => e.type === 'ai' && e.data.target === 'gross-receipts' && e.data.model)`));
+    await A.eval(`[...document.querySelector('#chk-gross-receipts .ai-out').querySelectorAll('button')].find(b => b.innerText.startsWith('Accept')).click()`);
+    check('Accepting saves it as a note on the finding (a person decided)', await A.waitFor(`[...__app.st.notes.values()].some(n => n.target === 'check:gross-receipts' && n.source === 'ai')`));
+    check('Decision logged', await A.eval(`__app.st.events.some(e => e.type === 'ai.decision' && e.data.decision === 'accept')`));
+    await A.as('st-05'); await A.hash('#/firm');
+    check('AI usage log visible to the firm', await A.waitFor(`T.main().includes('AI usage log') && T.main().includes('Second opinion')`));
+    await A.as('cu-01');
+    check('Clients never see AI tools', await A.eval(`!document.querySelector('.ai-btn')`));
+  }
+  await A.as('st-02');
+  await A.hash('#/about/errors');
+  check('Errors document rendered in the app with live links', await A.waitFor(`T.main().includes('Errors found, and how the design surfaced them') && document.querySelectorAll('code.linkable').length > 10`));
+  await A.eval(`[...document.querySelectorAll('code.linkable')].find(c => c.textContent === 'rsu-basis').click()`);
+  check('Clicking a check id in the document opens that check', await A.waitFor(`location.hash === '#/checks' && !!document.querySelector('.check-card.focused')`));
+
   section('Errors');
   const errs = [...A.errors, ...B.errors];
   check('No JavaScript errors in either browser during the run', !errs.length, errs.slice(0, 5).join(' | '));

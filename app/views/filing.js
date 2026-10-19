@@ -3,6 +3,7 @@ import { personName, fmtMoney, hash } from '../model.js';
 import { position, scopeFingerprint, activeAdjustments } from '../ledger.js';
 import { readiness } from './readiness.js';
 import { checkResolution } from './readiness.js';
+import { AiPanel } from './ai.js';
 
 export function FilingView() {
   const app = useApp();
@@ -177,6 +178,7 @@ function NoticeResponse({ n, onClose }) {
       ${it.checks.map(c => html`<div class="small"><b>Reconciliation:</b> ${c.why}${c.rows ? html`<table class="mini recon"><tbody>${c.rows.map(r => html`<tr><td>${r[0]}</td><td class="r">${r[1]}</td></tr>`)}</tbody></table>` : ''}</div>`)}
       <div class="small"><b>Documents:</b> <${Refs} list=${it.documents.map(d => d.id)} /></div>
     </div>`)}
+    <${AiPanel} task="notice_letter" target=${n.id} label="Draft response letter with AI" />
     <footer class="modal-f">
       <button onClick=${download}>Download record (JSON)</button>
       <button onClick=${() => window.print()}>Print</button>

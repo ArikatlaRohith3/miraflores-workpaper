@@ -4,6 +4,7 @@ import { signoffState } from '../ledger.js';
 import { NoteCard } from './trace.js';
 import { SignoffBar } from './area.js';
 import { NoteForm, JudgmentForm } from './forms.js';
+import { AiPanel } from './ai.js';
 
 export function ReviewView() {
   const app = useApp();
@@ -19,7 +20,8 @@ export function ReviewView() {
     ${tab === 'inbox' && html`<div>${mine.length ? mine.map(n => html`<${NoteCard} n=${n} full=${true} />`) : html`<div class="empty">Nothing waiting for you.</div>`}</div>`}
     ${tab === 'notes' && html`<div>
       <div class="row filters">${['open', 'blocking', 'questions', 'all'].map(f => html`<button class=${'chip' + (filter === f ? ' on' : '')} onClick=${() => setFilter(f)}>${f}</button>`)}</div>
-      <${Section} title="New note on the whole return"><${NoteForm} target="return" area=${null} /></${Section}>
+      <${Section} title="New note on the whole return"><${NoteForm} target="return" area=${null} />
+        <${AiPanel} task="review_memo" target="return" label="Draft review memo with AI" /></${Section}>
       ${shown.map(n => html`<${NoteCard} n=${n} full=${true} />`)}
       ${!shown.length && html`<div class="empty">No notes.</div>`}
     </div>`}

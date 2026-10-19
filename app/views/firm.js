@@ -1,6 +1,7 @@
 import { html, useState, useApp, Badge, Section, fmtDateTime } from '../ui.js';
 import { AREAS, personName } from '../model.js';
 import { readiness } from './readiness.js';
+import { AiLog } from './ai.js';
 
 export function FirmView() {
   const app = useApp();
@@ -27,6 +28,7 @@ export function FirmView() {
         ${model.packet.firm.staff.map(s => html`<tr><td>${s.name}</td><td>${s.role.replace('_', ' ')}</td><td>${s.credential || ''}</td><td>${s.sensitive_data_clearance ? html`<${Badge} kind="ok">cleared</${Badge}>` : html`<${Badge} kind="bad">masked</${Badge}>`}</td><td>${s.active_from}</td><td class="small">${s.note || ''}</td></tr>`)}
       </tbody></table>
     </${Section}>
+    <${Section} title="AI usage log"><p class="muted small">Every AI call: who asked, on what, which model, whether its citations checked out, and whether a person accepted it. Identifiers are masked before anything is sent to the model.</p><${AiLog} /></${Section}>
     <${Section} title=${`Sensitive data view log (${st.viewLog.length})`}>
       ${app.can('view_logs') ? html`<table class="list"><tbody>${[...st.viewLog].reverse().map(v => html`<tr><td class="small">${fmtDateTime(v.at)}</td><td>${personName(model, v.by)} <span class="muted small">${v.role}</span></td><td>${v.what}</td></tr>`)}</tbody></table>
         ${!st.viewLog.length && html`<p class="muted">No unmasked views yet. Every reveal of an SSN, account number or PIN is logged here.</p>`}`

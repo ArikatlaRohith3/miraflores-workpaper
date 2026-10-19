@@ -3,14 +3,11 @@ import { AREAS, areaOf } from '../model.js';
 import { taxEffect } from '../ledger.js';
 import { checkResolution } from './readiness.js';
 import { effectText } from './forms.js';
+import { AiPanel } from './ai.js';
 
 export function ChecksView() {
   const app = useApp();
   const { checks, st } = app;
-  const [tab, setTab] = useState('open');
-  const [selected, setSelected] = useState(new Set());
-  const [focus, setFocus] = useState(() => sessionStorage.getItem('mwp.focusCheck'));
-  useEffect(() => { if (focus) { sessionStorage.removeItem('mwp.focusCheck'); setTimeout(() => document.getElementById('chk-' + focus)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50); } }, []);
   const withRes = checks.map(c => ({ c, res: checkResolution(c, st) }));
   const groups = {
     open: withRes.filter(x => x.c.status === 'fail' && ['open', 'partial'].includes(x.res)),
@@ -18,6 +15,16 @@ export function ChecksView() {
     resolved: withRes.filter(x => ['adopted', 'dismissed', 'judged'].includes(x.res)),
     pass: withRes.filter(x => x.c.status === 'pass'),
   };
+  const tabOf = id => Object.keys(groups).find(g => groups[g].some(x => x.c.id === id));
+  const [focus, setFocus] = useState(() => sessionStorage.getItem('mwp.focusCheck'));
+  const [tab, setTab] = useState(() => (focus && tabOf(focus)) || 'open');
+  const [selected, setSelected] = useState(new Set());
+  // Focus requests can also arrive while this view is already open (search, document links).
+  useEffect(() => {
+    const take = () => { const f = sessionStorage.getItem('mwp.focusCheck'); if (!f) return; sessionStorage.removeItem('mwp.focusCheck'); setFocus(f); const t = tabOf(f); if (t) setTab(t); setTimeout(() => document.getElementById('chk-' + f)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80); };
+    take(); window.addEventListener('hashchange', take); const iv = setInterval(take, 400);
+    return () => { window.removeEventListener('hashchange', take); clearInterval(iv); };
+  }, []);
   const list = groups[tab];
   const adoptable = list.filter(x => (x.c.proposals || []).length && x.res !== 'adopted');
 
@@ -97,6 +104,7 @@ function CheckCard({ c, res, selectable, selected, onSelect, onAdopt, onDismiss,
       ${c.questions?.length > 0 && !asked.length && html`<button class="small" onClick=${onAsk}>Ask client</button>`}
       ${!app.st.dismissed.has(c.id) && html`<button class="small" onClick=${() => setDismissing(!dismissing)}>Dismiss…</button>`}
     </footer>`}
+    ${c.status !== 'pass' && html`<div class="ai-row"><${AiPanel} task="second_opinion" target=${c.id} label="AI second opinion" compact=${true} /><${AiPanel} task="client_question" target=${c.id} label="Draft client question" compact=${true} /></div>`}
     ${dismissing && html`<div class="row"><input placeholder="Why this is not an issue (required)" value=${reason} onInput=${e => setReason(e.target.value)} /><button class="small" onClick=${() => { if (reason.trim()) { onDismiss(reason); setDismissing(false); } }}>Dismiss</button></div>`}
   </article>`;
 }

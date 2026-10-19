@@ -144,6 +144,9 @@ export function describe(e, st) {
     case 'standards.update': return 'updated firm standards';
     case 'time': return `logged ${d.hours}h on ${d.area}`;
     case 'step': return `completed step "${d.step}"`;
+    case 'ai': return `used AI (${d.task.replace(/_/g, ' ')}) on ${d.target}`;
+    case 'ai.decision': return `${d.decision}ed an AI suggestion`;
+    case 'link': return html`linked <${Ref} r=${d.from.replace(/^line:/, '')} /> to <${Ref} r=${d.to} />`;
     case 'revert': return `undid ${d.label || d.ids.length + ' change(s)'}`;
     default: return e.type;
   }

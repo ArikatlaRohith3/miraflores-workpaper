@@ -16,6 +16,7 @@ import { ClientView } from './views/client.js';
 import { SearchPalette } from './views/search.js';
 import { RelatedView } from './views/related.js';
 import { NotificationBell } from './views/notifications.js';
+import { DocsView } from './views/docsview.js';
 
 const START_CLOCK = '2026-06-23T09:00:00Z'; // just after engine v3 — "now" for the workpaper
 
@@ -117,6 +118,10 @@ function App({ model, ledger }) {
     { id: 'filing', label: 'Filing & after' },
     { id: 'firm', label: 'Firm' },
     { id: 'client', label: 'Client portal (preview)' },
+    { sep: 'About this workpaper' },
+    { id: 'about/idea', label: 'Core idea & data model' },
+    { id: 'about/errors', label: 'Errors found' },
+    { id: 'about/readme', label: 'How to use · tradeoffs' },
   ];
 
   const [p0, p1] = route.parts;
@@ -131,6 +136,7 @@ function App({ model, ledger }) {
   else if (p0 === 'firm') view = html`<${FirmView} />`;
   else if (p0 === 'client') view = html`<${ClientView} preview=${true} />`;
   else if (p0 === 'related') view = html`<${RelatedView} />`;
+  else if (p0 === 'about') view = html`<${DocsView} doc=${p1} key=${p1} />`;
   else view = html`<${Overview} sinceSeen=${sinceSeen} />`;
   const current = route.parts.join('/');
 

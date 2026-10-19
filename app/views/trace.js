@@ -4,6 +4,7 @@ import { html, useState, useApp, Money, Delta, Badge, Ref, Refs, Sensitive, fmtD
 import { refKind, resolvePointer, paramValue, fmtValue, fmtMoney, areaOf, AREAS, personName } from '../model.js';
 import { adjustmentFor } from '../ledger.js';
 import { DocPage } from './docpage.js';
+import { AiPanel } from './ai.js';
 import { AdjustForm, VerifyForm, NoteForm, JudgmentForm, AttachForm, LinkForm, effectText } from './forms.js';
 
 export function TraceDrawer({ r, onClose, back }) {
@@ -106,6 +107,7 @@ function LineTrace({ r }) {
     <div class="act-buttons">
       ${typeof line.value === 'number' && app.can('adjust') && html`<button class="small primary" onClick=${() => setAdjusting(true)}>Adjust</button>`}
     </div>
+    <${AiPanel} task="explain_line" target=${key} label="Explain with AI" key=${'ai-' + key} />
     <h4>How it was built</h4>
     <div class="rule"><code>${line.rule}</code> ${rule}</div>
     ${line.inputs?.length > 0 && html`<table class="mini"><tbody>${line.inputs.map(i => { const il = model.current.byKey.get(i); const ia = adjustmentFor(st, i); return html`<tr><td><${Ref} r=${i} label=${i} /></td><td class="muted">${il?.label}</td><td class="r">${ia ? html`<s class="muted"><${Money} v=${il?.value} /></s> ` : ''}<${Money} v=${ia ? ia.to : il?.value} /></td></tr>`; })}</tbody></table>`}
