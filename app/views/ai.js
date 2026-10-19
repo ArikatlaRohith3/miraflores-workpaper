@@ -6,7 +6,7 @@
 import { html, useState, useEffect, useApp, Badge, Ref } from '../ui.js';
 import { maskText, refKind, fmtMoney, personName } from '../model.js';
 import { adjustmentFor, position } from '../ledger.js';
-import { checkResolution } from './readiness.js';
+import { checkResolution, readiness } from './readiness.js';
 
 let statusPromise = null;
 export function aiStatus() {
@@ -79,6 +79,9 @@ export function buildContext(app, task, target) {
     const pos = position(m, st, ['approved']); const all = position(m, st);
     parts.push(`RETURN STATUS: ${st.filing.status}. Engine v3 federal tax ${m.current.summary.federal.total_tax}, payments ${m.current.summary.federal.payments}, balance ${m.current.summary.federal.balance_due} (positive = owed, negative = refund); California tax ${m.current.summary.california.total_tax}, payments ${m.current.summary.california.payments}, balance ${m.current.summary.california.balance_due}.`);
     parts.push(`With approved workpaper changes: federal tax ${pos.federal.total_tax}, balance ${pos.federal.balance_due}; California tax ${pos.california.total_tax}, balance ${pos.california.balance_due}. Including proposed changes: federal balance ${all.federal.balance_due}, California ${all.california.balance_due}.`);
+    const R = readiness(app);
+    const filed = st.filing.frozen ? `The return HAS BEEN FILED: e-file accepted and frozen on ${st.filing.frozen.at.slice(0, 10)}${st.filing.amendments.length ? '; an amendment is in progress' : ''}. Filing is no longer blocked.` : `The return has NOT been filed yet (status ${st.filing.status}).`;
+    parts.push(`FILING READINESS (firm rules — only these block filing): ${filed} Failing checks still unresolved: ${R.openChecks.length}${R.openChecks.length ? ' (' + R.openChecks.map(c => c.id).join(', ') + ')' : ''}. Open blocking review notes: ${R.blockingNotes.length}. Changes awaiting approval: ${R.pendingPartner.length}. Required steps done: ${R.list.filter(x => x.done).length} of ${R.list.length}; not done: ${R.list.filter(x => !x.done).map(x => x.name).join('; ') || 'none'}. Checks with status "warn" are judgment items: they need a documented decision but do not block filing.`);
     for (const k of ['F1040.1z', 'F1040.2b', 'F1040.7', 'F1040.8', 'F1040.11', 'F1040.12', 'F1040.15', 'F1040.16', 'F1040.24', 'F1040.33', 'F1040.37', 'F540NR.17', 'F540NR.32', 'F540NR.64', 'F540NR.78', 'F540NR.97']) {
       const l = m.current.byKey.get(k); const a = adjustmentFor(st, k); refs.add(k);
       parts.push(`[${k}] ${l.label}: engine ${l.value}${a ? `, workpaper ${a.to} (${a.status})` : ''}; 2024: ${m.pyLines[k] ?? 'n/a'}`);
