@@ -4,9 +4,10 @@
 // "what changed since I last looked" for free.
 
 import { areaOf, hash } from './model.js';
+import { API } from './api.js';
 
 const CHANNEL = 'miraflores-workpaper';
-const POLL_MS = 2000;
+const POLL_MS = 2500;
 
 // Two storage modes behind one interface:
 //  - shared: the server (/api/ledger) holds the canonical log per workspace and
@@ -16,7 +17,7 @@ const POLL_MS = 2000;
 //    lives in this browser and syncs between its tabs.
 export async function createLedger(ws) {
   const storageKey = `miraflores.workpaper.CL-20417.${ws}.v2`;
-  const api = `api/ledger?ws=${encodeURIComponent(ws)}`;
+  const api = `${API}api/ledger?ws=${encodeURIComponent(ws)}`;
   let mode = 'local';
   let events = [];
   let status = 'local';
@@ -36,21 +37,15 @@ export async function createLedger(ws) {
   function loadLocal() { try { return JSON.parse(localStorage.getItem(storageKey) || '[]'); } catch { return []; } }
   function saveLocal() { try { localStorage.setItem(storageKey, JSON.stringify(events)); } catch (err) { alert('Could not save to browser storage: ' + err.message); } }
   function emit() { for (const l of listeners) l(events, status); }
-  // Server order is key order (server time). Events still in flight sort last.
+  // Server order is the database sequence (event.key, zero-padded). Events still in flight sort last.
   function dedupe(list) { const m = new Map(); for (const e of list) if (!m.has(e.id)) m.set(e.id, e); return [...m.values()]; }
   function renumber(list) {
     const confirmed = list.filter(e => !pending.has(e.id)).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
     return [...confirmed, ...[...pending.values()]].map((e, i) => (e.seq === i + 1 ? e : { ...e, seq: i + 1 }));
   }
-  // Re-read a short window behind the newest event so a late write from another
-  // server instance (slightly older timestamp) is never missed.
-  const watermark = () => {
-    const keys = events.filter(e => e.key).map(e => e.key);
-    if (!keys.length) return '';
-    const newest = keys[keys.length - 1];
-    const t = Number(newest.split('/e/')[1].slice(0, 14)) - 20000;
-    return newest.split('/e/')[0] + '/e/' + String(Math.max(0, t)).padStart(14, '0');
-  };
+  // The database assigns the order inside a transaction, so "everything after the
+  // last sequence number I have" is exact: no window, no missed writes.
+  const lastServerSeq = () => events.reduce((m, e) => (e.key ? Math.max(m, Number(e.key)) : m), 0);
 
   function merge(incoming) {
     const before = events.length;
@@ -67,8 +62,7 @@ export async function createLedger(ws) {
     if (mode !== 'shared' || pulling) return;
     pulling = true;
     try {
-      const wm = watermark();
-      const r = await fetch(`${api}${wm ? '&after=' + encodeURIComponent(wm) : ''}`, { cache: 'no-store' });
+      const r = await fetch(`${api}&since=${lastServerSeq()}`, { cache: 'no-store' });
       if (r.ok) {
         const d = await r.json();
         if (d.epoch !== epoch) { // workspace was reset elsewhere: reload in full
@@ -95,7 +89,7 @@ export async function createLedger(ws) {
     epoch = d.epoch; pending.clear(); events = renumber(dedupe(d.events)); emit();
   }
   if (mode === 'shared') {
-    setInterval(pull, POLL_MS);
+    setInterval(() => { if (!document.hidden) pull(); }, POLL_MS); // background tabs don't poll
     document.addEventListener('visibilitychange', () => { if (!document.hidden) pull(); });
   }
 
@@ -157,11 +151,11 @@ export async function createLedger(ws) {
     reload: () => (mode === 'shared' ? reloadFull() : null),
     async uploadFile(file, dataUrl) {
       if (mode !== 'shared') return null;
-      const r = await fetch(`api/files?ws=${encodeURIComponent(ws)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: file.name, type: file.type, size: file.size, dataUrl }) });
+      const r = await fetch(`${API}api/files?ws=${encodeURIComponent(ws)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: file.name, type: file.type, size: file.size, dataUrl }) });
       if (!r.ok) throw new Error(`upload failed (${r.status})`);
       return (await r.json()).id;
     },
-    fileUrl(id) { return `api/files?ws=${encodeURIComponent(ws)}&id=${encodeURIComponent(id)}`; },
+    fileUrl(id) { return `${API}api/files?ws=${encodeURIComponent(ws)}&id=${encodeURIComponent(id)}`; },
   };
 }
 

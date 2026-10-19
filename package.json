@@ -1,9 +1,0 @@
-{
-  "name": "miraflores-workpaper",
-  "private": true,
-  "type": "module",
-  "description": "Web-native tax workpaper prototype (static front end + Netlify Functions ledger)",
-  "dependencies": {
-    "@netlify/blobs": "10.0.1"
-  }
-}

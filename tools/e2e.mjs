@@ -6,7 +6,8 @@ import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const BASE = (process.argv[2] || 'https://rohith-miraflores-workpaper.netlify.app').replace(/\/$/, '');
+const BASE = (process.argv[2] || 'https://arikatlarohith3.github.io/miraflores-workpaper').replace(/\/$/, '');
+const API_BASE = (process.env.API_BASE || 'https://miraflores-workpaper-api.rohith-miraflores.workers.dev').replace(/\/$/, '');
 const WS = 'e2e-' + Date.now().toString(36);
 const OUT = join(tmpdir(), 'mwp-e2e'); rmSync(OUT, { recursive: true, force: true }); mkdirSync(OUT, { recursive: true });
 const CHROME = process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
@@ -70,7 +71,7 @@ const A = new Browser('alice', 9401), B = new Browser('bob', 9402);
 
 async function run() {
   console.log(`Base ${BASE}  workspace ${WS}`);
-  const api = await fetch(`${BASE}/api/ledger?ws=${WS}`).then(r => r.json()).catch(() => null);
+  const api = await fetch(`${API_BASE}/api/ledger?ws=${WS}`).then(r => r.json()).catch(() => null);
   await A.start(url);
   const mode = await A.eval(`__app.ledger.mode`);
 
@@ -379,10 +380,10 @@ async function run() {
   check('Export of the full log', exported >= n, `exported ${exported}`);
 
   section('AI assistance (guardrails)');
-  const aiCfg = await A.eval(`fetch('api/ai').then(r => r.json())`);
+  const aiCfg = await A.eval(`import('./app/api.js').then(m => fetch(m.API + 'api/ai')).then(r => r.json())`);
   console.log(`  (AI ${aiCfg.configured ? 'configured: real Gemini calls' : 'not configured: using a simulated model response'})`);
   if (!aiCfg.configured) {
-    await A.eval(`(() => { const f = window.fetch; window.fetch = (u, o) => String(u).startsWith('api/ai') && o?.method === 'POST'
+    await A.eval(`(() => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('api/ai') && o?.method === 'POST'
       ? Promise.resolve(new Response(JSON.stringify({ answer: 'Gross receipts were built from books revenue [D14] plus the 1099-K [D21]; the 1099-K is already inside the Atlas 1099-NEC [D17]. See [check:gross-receipts] and [D99].', verdict: 'agree', citations: ['D14', 'D21', 'D17', 'check:gross-receipts', 'D99'], model: 'simulated', ms: 900 }), { headers: { 'content-type': 'application/json' } }))
       : f(u, o); window.__aiConfigured = false; return true; })()`);
   }
@@ -429,7 +430,7 @@ async function run() {
   const askCtx = await A.eval(`(async () => { const m = await import('./app/views/ai.js'); return m.buildContext(__app, 'ask', 'What is still blocking filing?').text; })()`);
   check('Ask context covers status, changes, checks and open notes (identifiers masked)', askCtx.includes('RETURN STATUS') && askCtx.includes('Check [check:') && !/666-\d\d-\d{4}/.test(askCtx));
   if (!aiCfg.configured) {
-    await A.eval(`(() => { const f = window.fetch; window.fetch = (u, o) => String(u).startsWith('api/ai') && o?.method === 'POST'
+    await A.eval(`(() => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('api/ai') && o?.method === 'POST'
       ? Promise.resolve(new Response(JSON.stringify({ answer: 'Nothing blocks filing: the return was accepted [F1040.37].', citations: ['F1040.37'], model: 'simulated', ms: 500 }), { headers: { 'content-type': 'application/json' } }))
       : f(u, o); return true; })()`);
   }
@@ -449,7 +450,7 @@ async function run() {
 run().catch(e => { console.error(e); check('Test run completed without crashing', false, e.message); }).finally(async () => {
   try { await A.shot('final-a'); await B.shot('final-b'); } catch { }
   A.close(); B.close();
-  if (!process.env.KEEP) await fetch(`${BASE}/api/ledger?ws=${WS}`, { method: 'DELETE' }).catch(() => { });
+  if (!process.env.KEEP) await fetch(`${API_BASE}/api/ledger?ws=${WS}`, { method: 'DELETE' }).catch(() => { });
   const failed = results.filter(r => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} passed${failed.length ? `; FAILED:\n - ${failed.map(f => `[${f.area}] ${f.name}${f.detail ? ' — ' + f.detail : ''}`).join('\n - ')}` : ''}`);
   writeFileSync(join(OUT, 'results.json'), JSON.stringify(results, null, 2));

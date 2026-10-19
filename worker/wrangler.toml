@@ -1,0 +1,9 @@
+name = "miraflores-workpaper-api"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "miraflores-workpaper"
+database_id = "2fbb4fba-337f-4daa-a884-45e86e835679"

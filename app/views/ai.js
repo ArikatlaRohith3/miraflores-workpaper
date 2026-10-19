@@ -7,10 +7,11 @@ import { html, useState, useEffect, useApp, Badge, Ref } from '../ui.js';
 import { maskText, refKind, fmtMoney, personName } from '../model.js';
 import { adjustmentFor, position, taxEffect } from '../ledger.js';
 import { checkResolution, readiness } from './readiness.js';
+import { API } from '../api.js';
 
 let statusPromise = null;
 export function aiStatus() {
-  if (!statusPromise) statusPromise = fetch('api/ai', { cache: 'no-store' }).then(r => (r.ok ? r.json() : { configured: false })).catch(() => ({ configured: false }));
+  if (!statusPromise) statusPromise = fetch(API + 'api/ai', { cache: 'no-store' }).then(r => (r.ok ? r.json() : { configured: false })).catch(() => ({ configured: false }));
   return statusPromise;
 }
 
@@ -168,7 +169,7 @@ export function AiPanel({ task, target, label, compact }) {
     setSt({ phase: 'loading' });
     const { text, refs } = buildContext(app, task, target);
     try {
-      const r = await fetch('api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task, context: text }) });
+      const r = await fetch(API + 'api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task, context: text }) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || `AI error ${r.status}`);
       const cites = normalizeCites(d.citations);
@@ -212,7 +213,7 @@ export function AiPanel({ task, target, label, compact }) {
 
 export async function askAi(app, task, target, question) {
   const { text, refs } = buildContext(app, task, target);
-  const r = await fetch('api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task, context: text, question }) });
+  const r = await fetch(API + 'api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task, context: text, question }) });
   const d = await r.json();
   if (!r.ok) throw new Error(d.error || `AI error ${r.status}`);
   const cites = normalizeCites(d.citations);
