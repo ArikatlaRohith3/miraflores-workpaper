@@ -1,7 +1,7 @@
 // AI assistant endpoint (Google Gemini). The browser sends a small evidence
 // bundle for one item; the model must answer only from it and cite the
 // references it used. The key stays on the server (GEMINI_API_KEY).
-const MODEL_FALLBACKS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-flash-latest'];
+const MODEL_FALLBACKS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-flash-latest'];
 const MAX_CONTEXT = 60_000;
 
 const SYSTEM = `You are an assistant inside a CPA firm's tax workpaper for one household's 2025 US federal and California return.
@@ -71,7 +71,8 @@ export default async (req) => {
     try { res = await callGemini(key, model, task, ctx); }
     catch (err) { return json({ error: err.name === 'AbortError' ? 'The AI took too long to answer. Try again.' : `AI request failed: ${err.message}` }, 504); }
     const { status, body } = res;
-    if (status === 404) { last = { status, body }; continue; } // model not available to this key: try the next
+    // Not available to this key, overloaded or out of quota: try the next model.
+    if ([404, 429, 500, 503].includes(status)) { last = { status, body }; continue; }
     if (status !== 200) return json({ error: body?.error?.message || `Gemini error ${status}` }, status === 429 ? 429 : 502);
     const text = body?.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
     let out;
