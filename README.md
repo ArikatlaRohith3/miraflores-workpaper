@@ -2,22 +2,22 @@
 
 A web-native tax workpaper for one complex household's return. It loads `data/packet.json` as delivered and never modifies it. Everything people do is saved as an append-only log on top of the packet, stored on the server so several people can work on it at once.
 
-**Live:** https://rohith-miraflores-workpaper.netlify.app. Everyone who opens this link shares the `demo` workspace. For a clean copy of your own, click the green status chip in the header, then **Open a new private sandbox**.
+**Live:** https://arikatlarohith3.github.io/miraflores-workpaper/. Everyone who opens this link shares the `demo` workspace. For a clean copy of your own, click the green status chip in the header, then **Open a new private sandbox**.
 
 - **Core idea and data model:** [docs/ONE_PAGER.md](docs/ONE_PAGER.md)
 - **Errors found and how the design surfaced them:** [docs/ERRORS.md](docs/ERRORS.md)
 
 ## Run it
 
-The front end is static, with no build step. The shared log is two small Netlify Functions backed by Netlify Blobs.
+The front end is static, with no build step, and is served by **GitHub Pages** from this repository. The backend is one **Cloudflare Worker** (`worker/`) with a **D1** (SQLite) database. It runs the shared log, evidence files and the Gemini endpoint. `<meta name="api-base">` in `index.html` says where the backend is.
 
 ```bash
-netlify dev                     # front end + functions + local storage on http://localhost:8888
-# or, front end only (the log is then saved in the browser):
-python -m http.server 8000
+python -m http.server 8000                       # serve the front end locally; it uses the live backend
+cd worker && npx wrangler deploy                 # deploy the backend (wrangler.toml, schema.sql)
+npx wrangler secret put GEMINI_API_KEY           # AI key, stored only in Cloudflare
 ```
 
-Deploy with `netlify deploy --prod` (it uses `netlify.toml`). Without the functions the app still works: it detects that there is no server and saves in the browser instead.
+Without a reachable backend the app still works: it detects this and saves in the browser instead.
 
 ## Five-minute tour
 
@@ -59,14 +59,14 @@ Guardrails:
 - Output is a suggestion. A person accepts it (saved as a note or question, with the model name) or discards it.
 - Every call and decision is logged in Firm → AI usage log. Clients never see AI tools.
 
-The server (`netlify/functions/ai.mjs`) holds the key (`GEMINI_API_KEY`). It discovers which models the key can use, because model names are retired over time. It sends **hedged requests** to up to four current flash models and keeps the first good answer. Free-tier models are often busy, and this took typical latency from 15–30 s (or failure) to about 1–3 s.
+The Worker (`worker/src/index.js`) holds the key (`GEMINI_API_KEY`). It discovers which models the key can use, because model names are retired over time. It sends **hedged requests** to up to four current flash models and keeps the first good answer. Free-tier models are often busy, and this took typical latency from 15–30 s (or failure) to about 1–3 s.
 
 ## Tests
 
 ```bash
 node tools/run_checks.mjs                     # the 32 independent checks, headless
-node tools/e2e.mjs                            # 133 end-to-end checks of every requirement in the brief, run against the live site
-node tools/e2e.mjs http://localhost:8888      # …or against netlify dev
+node tools/e2e.mjs                            # 134 end-to-end checks of every requirement in the brief, run against the live site
+node tools/e2e.mjs http://127.0.0.1:8000      # …or against a local copy of the front end
 ```
 
 `e2e.mjs` drives the real UI in two independent headless Chrome browsers, so it is two different "computers". It covers:
@@ -95,13 +95,15 @@ app/
                 changes/versions, review, filing, firm, client portal, search
   vendor/       Preact + htm (13 KB, vendored, no CDN at runtime)
 data/packet.json   the packet, unchanged
-netlify/functions/ ledger.mjs (shared append-only log), files.mjs (evidence files)
+worker/         Cloudflare Worker: /api/ledger (append-only log), /api/files, /api/ai; D1 schema
 tools/          probe scripts used to explore the packet, headless check runner, browser smoke test
 ```
 
 ## Decisions and tradeoffs
 
-- **A tiny backend.** The server only appends and lists events: `/api/ledger` and `/api/files`, about 120 lines in total. Each event is stored under its own unique, time-ordered key, so simultaneous saves never overwrite each other. Load testing found that a single shared document with compare-and-swap lost writes, which is why it uses per-event keys. Browsers poll every 2 seconds, and changes appear on other machines within about 2 seconds. A watermark re-reads a short window, so late writes from another server instance are never missed. There is no login: the role switcher stands in for authentication, so masking and the view log demonstrate the rules rather than enforce them against a determined user.
+- **A tiny backend.** The server only appends and lists events. Each event is one row in an INSERT-only table whose autoincrement key is the canonical order. The database serializes writes, so simultaneous saves can't overwrite each other, and a retried save is ignored by its unique id. The first version stored the whole log as one document with compare-and-swap, and a 30-save load test lost 20 writes; that's why each event became its own record. Browsers poll every 2.5 seconds (background tabs pause), and a browser advances its "seen up to" marker only from server listings, so a save that lands a moment earlier elsewhere is never skipped. That bug was caught by the two-browser test.
+- **Hosting moved from Netlify to GitHub Pages + Cloudflare.** Netlify's free plan bills deploys and function calls against a monthly credit pool, and iterating used it up. Static hosting plus a Worker with D1 has daily free limits instead, so the link can't be paused mid-review.
+- **No login.** The role switcher stands in for authentication, so masking and the view log demonstrate the rules rather than enforce them against a determined user. The one server-side guard is that only the owner (with a reset token) can wipe the shared `demo` workspace.
 - **Front end without a build step.** Preact + htm, vendored at 13 KB.
 - **Simulated documents.** Pages are rendered from `printed_content`, and values are highlighted by locating them in the text. Trace links point at `(document, page, field position)`, so a real PDF renderer could replace `views/docpage.js` without changing any link.
 - **Tax effects from rates.** As the README in the packet instructs, effects are change × rate per category, or the engine's exact result for what-ifs. Where second-order effects matter (QBI, SEP limit, SALT cap), the check either computes them or says so.

@@ -45,7 +45,10 @@ export async function createLedger(ws) {
   }
   // The database assigns the order inside a transaction, so "everything after the
   // last sequence number I have" is exact: no window, no missed writes.
-  const lastServerSeq = () => events.reduce((m, e) => (e.key ? Math.max(m, Number(e.key)) : m), 0);
+  // Advanced only by what the server *lists*, never by our own save confirmations:
+  // another browser's save can get a lower sequence number than ours yet reach the
+  // database a moment before it, and we must still fetch it.
+  let polledUpTo = events.reduce((m, e) => (e.key ? Math.max(m, Number(e.key)) : m), 0);
 
   function merge(incoming) {
     const before = events.length;
@@ -62,12 +65,15 @@ export async function createLedger(ws) {
     if (mode !== 'shared' || pulling) return;
     pulling = true;
     try {
-      const r = await fetch(`${api}&since=${lastServerSeq()}`, { cache: 'no-store' });
+      const r = await fetch(`${api}&since=${polledUpTo}`, { cache: 'no-store' });
       if (r.ok) {
         const d = await r.json();
         if (d.epoch !== epoch) { // workspace was reset elsewhere: reload in full
           await reloadFull();
-        } else if (merge(d.events)) emit();
+        } else {
+          for (const e of d.events) if (e.key) polledUpTo = Math.max(polledUpTo, Number(e.key));
+          if (merge(d.events)) emit();
+        }
         if (status !== 'live') { status = 'live'; emit(); }
       } else if (status !== 'offline') { status = 'offline'; emit(); }
     } catch { if (status !== 'offline') { status = 'offline'; emit(); } }
@@ -86,7 +92,8 @@ export async function createLedger(ws) {
   }
   async function reloadFull() {
     const d = await (await fetch(api, { cache: 'no-store' })).json();
-    epoch = d.epoch; pending.clear(); events = renumber(dedupe(d.events)); emit();
+    epoch = d.epoch; pending.clear(); events = renumber(dedupe(d.events));
+    polledUpTo = events.reduce((m, e) => (e.key ? Math.max(m, Number(e.key)) : m), 0); emit();
   }
   if (mode === 'shared') {
     setInterval(() => { if (!document.hidden) pull(); }, POLL_MS); // background tabs don't poll
