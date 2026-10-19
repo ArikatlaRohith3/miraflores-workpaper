@@ -34,15 +34,20 @@ const SCHEMA = {
 const json = (b, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 
 async function callGemini(key, model, task, context) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 22_000); // stay inside the function time limit
+  const long = task === 'review_memo' || task === 'notice_letter';
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: 'POST',
+    signal: ctrl.signal,
     headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: SYSTEM }] },
       contents: [{ role: 'user', parts: [{ text: `TASK: ${TASKS[task]}\n\nCONTEXT:\n${context}` }] }],
-      generationConfig: { temperature: 0.2, responseMimeType: 'application/json', responseSchema: SCHEMA, maxOutputTokens: 2048 },
+      generationConfig: { temperature: 0.2, responseMimeType: 'application/json', responseSchema: SCHEMA, maxOutputTokens: long ? 2048 : 900,
+        ...(/2\.5|flash-latest/.test(model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}) },
     }),
-  });
+  }).finally(() => clearTimeout(timer));
   const body = await r.json().catch(() => ({}));
   return { status: r.status, body };
 }
@@ -62,7 +67,10 @@ export default async (req) => {
   let last = null;
   for (const model of models) {
     const t0 = Date.now();
-    const { status, body } = await callGemini(key, model, task, ctx);
+    let res;
+    try { res = await callGemini(key, model, task, ctx); }
+    catch (err) { return json({ error: err.name === 'AbortError' ? 'The AI took too long to answer. Try again.' : `AI request failed: ${err.message}` }, 504); }
+    const { status, body } = res;
     if (status === 404) { last = { status, body }; continue; } // model not available to this key: try the next
     if (status !== 200) return json({ error: body?.error?.message || `Gemini error ${status}` }, status === 429 ? 429 : 502);
     const text = body?.candidates?.[0]?.content?.parts?.map(p => p.text).join('') || '';
