@@ -113,6 +113,11 @@ export function buildContext(app, task, target) {
   return { text: maskText(parts.join('\n')), refs };
 }
 
+// Models sometimes return "[D28, D29]" or "[check:x]" in the citation list: flatten to bare ids.
+export function normalizeCites(list) {
+  return [...new Set((list || []).flatMap(c => String(c).split(/\s*[,;]\s*/)).map(c => c.trim().replace(/^\[+|\]+$/g, '').trim()).filter(Boolean))];
+}
+
 function validRef(app, r) {
   const m = app.model;
   if (r.startsWith('check:')) return app.checks.some(c => c.id === r.slice(6));
@@ -159,7 +164,7 @@ export function AiPanel({ task, target, label, compact }) {
       const r = await fetch('api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task, context: text }) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || `AI error ${r.status}`);
-      const cites = [...new Set(d.citations || [])];
+      const cites = normalizeCites(d.citations);
       const unverified = cites.filter(c => !validRef(app, c));
       const notInContext = cites.filter(c => validRef(app, c) && !refs.has(c) && !text.includes(c));
       const ev = app.act('ai', { task, target, model: d.model, ms: d.ms, citations: cites, unverified, notInContext, verdict: d.verdict || null, answer: d.answer, missing: d.missing || '' });
@@ -203,7 +208,7 @@ export async function askAi(app, task, target, question) {
   const r = await fetch('api/ai', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task, context: text, question }) });
   const d = await r.json();
   if (!r.ok) throw new Error(d.error || `AI error ${r.status}`);
-  const cites = [...new Set(d.citations || [])];
+  const cites = normalizeCites(d.citations);
   const unverified = cites.filter(c => !validRef(app, c));
   const ev = app.act('ai', { task, target: task === 'ask' ? 'workpaper' : target, question: question || undefined, model: d.model, ms: d.ms, citations: cites, unverified, verdict: d.verdict || null, answer: d.answer, missing: d.missing || '' });
   return { ...d, citations: cites, unverified, eventId: ev?.id, refs };
