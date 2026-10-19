@@ -100,11 +100,14 @@ function RefOrCheck({ r }) {
 // Render answer text, turning [ref] into clickable chips (and flagging unknown ones).
 function AnswerText({ text }) {
   const app = useApp();
-  const parts = String(text || '').split(/(\[[^\]\s]{2,80}\])/g);
+  const parts = String(text || '').split(/(\[[^\]]{2,160}\])/g);
+  const chip = r => (validRef(app, r) ? html`<${RefOrCheck} r=${r} />` : html`<span class="badge bad" title="Not found in the packet — possible hallucination">${r}?</span>`);
   return html`<div class="ai-text">${parts.map(p => {
     const m = /^\[([^\]]+)\]$/.exec(p);
     if (!m) return p;
-    return validRef(app, m[1]) ? html`<${RefOrCheck} r=${m[1]} />` : html`<span class="badge bad" title="Not found in the packet — possible hallucination">${m[1]}?</span>`;
+    const ids = m[1].split(/\s*[,;]\s*/).filter(Boolean);
+    if (ids.some(x => /\s/.test(x))) return p; // ordinary bracketed prose, not references
+    return ids.map(chip);
   })}</div>`;
 }
 

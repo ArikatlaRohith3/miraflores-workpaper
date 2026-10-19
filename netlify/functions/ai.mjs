@@ -33,9 +33,9 @@ const SCHEMA = {
 
 const json = (b, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
 
-async function callGemini(key, model, task, context) {
+async function callGemini(key, model, task, context, budgetMs) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 22_000); // stay inside the function time limit
+  const timer = setTimeout(() => ctrl.abort(), budgetMs); // each model gets a slice of the function's time limit
   const long = task === 'review_memo' || task === 'notice_letter';
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: 'POST',
@@ -65,11 +65,15 @@ export default async (req) => {
   const ctx = context.slice(0, MAX_CONTEXT);
   const models = [process.env.GEMINI_MODEL, ...MODEL_FALLBACKS].filter(Boolean);
   let last = null;
-  for (const model of models) {
+  const deadline = Date.now() + 24_000;
+  for (const [i, model] of models.entries()) {
     const t0 = Date.now();
+    const left = deadline - t0;
+    if (left < 3000) break;
+    const budget = i === models.length - 1 ? left : Math.min(left, task === 'review_memo' || task === 'notice_letter' ? 12_000 : 8_000);
     let res;
-    try { res = await callGemini(key, model, task, ctx); }
-    catch (err) { return json({ error: err.name === 'AbortError' ? 'The AI took too long to answer. Try again.' : `AI request failed: ${err.message}` }, 504); }
+    try { res = await callGemini(key, model, task, ctx, budget); }
+    catch (err) { last = { status: 504, body: { error: { message: err.name === 'AbortError' ? 'The AI took too long to answer. Try again.' : err.message } } }; continue; }
     const { status, body } = res;
     // Not available to this key, overloaded or out of quota: try the next model.
     if ([404, 429, 500, 503].includes(status)) { last = { status, body }; continue; }
@@ -79,7 +83,7 @@ export default async (req) => {
     try { out = JSON.parse(text); } catch { out = { answer: text, citations: [] }; }
     return json({ ...out, model, ms: Date.now() - t0, truncated: context.length > MAX_CONTEXT });
   }
-  return json({ error: last?.body?.error?.message || 'No Gemini model available for this key' }, 502);
+  return json({ error: last?.body?.error?.message || 'No Gemini model available for this key' }, last?.status === 504 ? 504 : 502);
 };
 
 export const config = { path: '/api/ai' };
